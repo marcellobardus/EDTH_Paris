@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent"
+version = "0.1.0"
+description = "Interceptor agent — PN guidance, peer comms, re-tasking — Team 3"
+requires-python = ">=3.12"
+dependencies = [
+    "contracts",
+    "numpy>=1.26",
+]
+
+[tool.uv.sources]
+contracts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent"]

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gs"
+version = "0.1.0"
+description = "Ground station — track fusion, threat assessment, assignment — Team 2"
+requires-python = ">=3.12"
+dependencies = [
+    "contracts",
+    "numpy>=1.26",
+    "scipy>=1.13",
+]
+
+[tool.uv.sources]
+contracts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["gs"]

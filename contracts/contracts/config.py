@@ -4,9 +4,11 @@ Load with: ScenarioConfig.from_yaml("config/scenario_default.yaml")
 """
 
 from __future__ import annotations
+
 from typing import Literal
-from pydantic import BaseModel, model_validator
+
 import yaml
+from pydantic import BaseModel, model_validator
 
 
 class RadarConfig(BaseModel):
@@ -38,11 +40,16 @@ class CommsConfig(BaseModel):
     max_claim_rounds: int = 2             # rounds before greedy fallback
 
 
-class ScenarioConfig(BaseModel):
+class ScenarioMeta(BaseModel):
+    """Top-level scenario metadata — the `scenario:` block in the YAML."""
     seed: int
     target_position: tuple[float, float, float]
     duration_max: float                   # seconds
     situation: Literal["A", "B"]
+
+
+class ScenarioConfig(BaseModel):
+    scenario: ScenarioMeta
     radars: list[RadarConfig]
     shaheds: ShahedConfig
     interceptors: InterceptorConfig

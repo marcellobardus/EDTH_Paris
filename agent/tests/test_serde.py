@@ -1,7 +1,7 @@
 """Wire-codec tests: contract dataclass survives a JSON round-trip intact."""
 
-from agent.serde import decode, encode
-from contracts.messages import Assignment, InterceptorState
+from agent.serde import decode, decode_list, encode, encode_list
+from contracts.messages import Assignment, InterceptorState, Track
 
 
 def test_assignment_roundtrip() -> None:
@@ -37,3 +37,24 @@ def test_encode_rejects_non_dataclass() -> None:
 
     with pytest.raises(TypeError):
         encode({"not": "a dataclass"})
+
+
+def test_assignment_list_roundtrip() -> None:
+    # GS topics carry arrays (Assignment[], Track[]) in one std_msgs/String.
+    batch = [
+        Assignment("i1", "t1", (0.0, 0.0, 0.0), 0.0),
+        Assignment("i2", "t2", (1.0, 2.0, 3.0), 0.0),
+    ]
+    back = decode_list(encode_list(batch), Assignment)
+    assert back == batch
+
+
+def test_track_list_roundtrip_keeps_list_and_tuple_fields() -> None:
+    # Track mixes tuple fields (position/velocity) and a list field (covariance):
+    # the codec must restore tuples but leave the list-typed covariance a list.
+    cov = [[0.0] * 6 for _ in range(6)]
+    tracks = [Track("t1", (1.0, 2.0, 3.0), (4.0, 5.0, 6.0), cov, True, 0.0)]
+    back = decode_list(encode_list(tracks), Track)
+    assert back == tracks
+    assert isinstance(back[0].position, tuple)
+    assert isinstance(back[0].covariance, list)

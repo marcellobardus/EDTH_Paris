@@ -8,7 +8,7 @@ state, absorb my assignment, and emit an InterceptorState snapshot.
 
 from __future__ import annotations
 
-from contracts.messages import Assignment, InterceptorState
+from contracts.messages import Assignment, InterceptorState, Track
 
 Vec3 = tuple[float, float, float]
 
@@ -39,6 +39,8 @@ class InterceptorLocalState:
         self.assigned_track_id: str | None = None
         self.initial_waypoint: Vec3 | None = None
         self.alive: bool = True
+        # Latest /gs/tracks snapshot (passive fusion continues post-launch, Q3).
+        self.latest_tracks: dict[str, Track] = {}
 
     def apply_assignments(self, assignments: list[Assignment]) -> bool:
         """Absorb a batch from /gs/assignments. Returns True if mine changed."""
@@ -52,6 +54,16 @@ class InterceptorLocalState:
         self.assigned_track_id = mine.track_id
         self.initial_waypoint = mine.initial_waypoint
         return changed
+
+    def update_tracks(self, tracks: list[Track]) -> None:
+        """Absorb the latest /gs/tracks snapshot (keyed by track_id)."""
+        self.latest_tracks = {t.track_id: t for t in tracks}
+
+    def target(self) -> Track | None:
+        """The currently-assigned track, if we have a fresh estimate for it."""
+        if self.assigned_track_id is None:
+            return None
+        return self.latest_tracks.get(self.assigned_track_id)
 
     def to_state_msg(self, timestamp: float) -> InterceptorState:
         """Snapshot for the 5 Hz broadcast on /interceptors/{id}/state."""

@@ -37,15 +37,7 @@ def encode(obj: Any) -> str:
     return json.dumps(dataclasses.asdict(obj))
 
 
-def decode[T](data: str, cls: type[T]) -> T:
-    """Rebuild a contract dataclass of type `cls` from a JSON string.
-
-    JSON has no tuple type, so positions/velocities round-trip as lists; we
-    coerce fields declared as `tuple[...]` back to tuples (leaving e.g.
-    `list[list[float]]` covariance untouched) so equality and downstream maths
-    behave as the contract intends.
-    """
-    raw = json.loads(data)
+def _from_dict[T](raw: dict[str, Any], cls: type[T]) -> T:
     by_name = {f.name: f for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
     kwargs: dict[str, Any] = {}
     for name, value in raw.items():
@@ -54,3 +46,31 @@ def decode[T](data: str, cls: type[T]) -> T:
             value = tuple(value)
         kwargs[name] = value
     return cls(**kwargs)
+
+
+def decode[T](data: str, cls: type[T]) -> T:
+    """Rebuild a single contract dataclass of type `cls` from a JSON string.
+
+    JSON has no tuple type, so positions/velocities round-trip as lists; we
+    coerce fields declared as `tuple[...]` back to tuples (leaving e.g.
+    `list[list[float]]` covariance untouched) so equality and downstream maths
+    behave as the contract intends.
+    """
+    return _from_dict(json.loads(data), cls)
+
+
+def encode_list(objs: list[Any]) -> str:
+    """Serialize a list of contract dataclasses (e.g. the GS `Assignment[]`,
+    `Track[]` topics carry a JSON array in one std_msgs/String)."""
+    for obj in objs:
+        if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
+            raise TypeError(f"encode_list() expects dataclass instances, got {type(obj)!r}")
+    return json.dumps([dataclasses.asdict(obj) for obj in objs])
+
+
+def decode_list[T](data: str, cls: type[T]) -> list[T]:
+    """Rebuild a list of contract dataclasses of type `cls` from a JSON array."""
+    raw = json.loads(data)
+    if not isinstance(raw, list):
+        raise ValueError(f"decode_list() expected a JSON array, got {type(raw)!r}")
+    return [_from_dict(item, cls) for item in raw]

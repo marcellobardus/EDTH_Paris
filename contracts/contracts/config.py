@@ -33,11 +33,18 @@ class InterceptorConfig(BaseModel):
     launch_position: tuple[float, float, float]
 
 
+class GuidanceConfig(BaseModel):
+    update_rate_hz: float = 10.0          # PN recompute / waypoint publish rate (FR-6.2)
+    nav_constant: float = 4.0             # PN gain N (3-5)
+    lookahead_s: float = 1.0              # carrot horizon: waypoint = speed * lookahead ahead
+
+
 class CommsConfig(BaseModel):
     publish_rate_hz: float = 5.0
     packet_loss_prob: float = 0.10        # probability a single message is dropped
     consensus_window_ms: float = 400.0    # claim-and-confirm wait window
     max_claim_rounds: int = 2             # rounds before greedy fallback
+    staleness_timeout_s: float = 1.5      # peer silent longer than this is "stale" (Q2)
 
 
 class ScenarioMeta(BaseModel):
@@ -54,6 +61,7 @@ class ScenarioConfig(BaseModel):
     shaheds: ShahedConfig
     interceptors: InterceptorConfig
     comms: CommsConfig = CommsConfig()
+    guidance: GuidanceConfig = GuidanceConfig()
 
     @model_validator(mode="after")
     def check_counts(self) -> ScenarioConfig:

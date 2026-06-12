@@ -33,11 +33,18 @@ import os
 
 import rclpy
 from contracts.config import ScenarioConfig
-from contracts.messages import Assignment, Track, WaypointCommand
+from contracts.messages import (
+    Assignment,
+    EngagementEvent,
+    InterceptorState,
+    Track,
+    WaypointCommand,
+)
 from contracts.topics import Topics
 from rclpy.node import Node
 
 from agent import guidance
+from agent.awareness import AwarenessPicture
 from agent.comms import LATCHED_QOS, Comms
 from agent.local_state import InterceptorLocalState
 from agent.packet_loss import PacketDropper, agent_seed
@@ -72,12 +79,25 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         )
         self.comms = Comms(self, dropper)
 
+        # Local awareness picture, built from peer broadcasts (FR-7.3).
+        self.picture = AwarenessPicture(self.state.id, self.config.comms.staleness_timeout_s)
+
         # GS topics are not lossy: assignments are latched (one-shot at launch),
-        # tracks are passive fusion. Peer topics (added in A4) will be lossy.
+        # tracks are passive fusion. Peer topics ARE lossy (FR-7.2).
         self.comms.subscribe_list(
             Topics.GS_ASSIGNMENTS, Assignment, self._on_assignments, qos=LATCHED_QOS
         )
         self.comms.subscribe_list(Topics.GS_TRACKS, Track, self._on_tracks)
+        self.comms.subscribe(Topics.ENGAGEMENT, EngagementEvent, self.picture.on_engagement)
+
+        # Peer state broadcasts (all other interceptors). Convention: ids i1..iN.
+        for peer_id in self._peer_ids():
+            self.comms.subscribe(
+                Topics.interceptor_state(peer_id),
+                InterceptorState,
+                self.picture.on_peer_state,
+                lossy=True,
+            )
 
         # 5 Hz state broadcast.
         self._state_topic = Topics.interceptor_state(self.state.id)
@@ -89,18 +109,27 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         self.comms.advertise(self._waypoint_topic)
         self.create_timer(1.0 / self.config.guidance.update_rate_hz, self._publish_waypoint)
 
+        # 2 Hz awareness check (A4 logs conflicts; A5 will act on them).
+        self._conflict_logged = False
+        self.create_timer(0.5, self._check_awareness)
+
         self.get_logger().info(
             f"{self.state.id} up: launch={self.state.position}, "
             f"state @ {self.config.comms.publish_rate_hz} Hz, "
             f"waypoints @ {self.config.guidance.update_rate_hz} Hz"
         )
 
-    # -- time --------------------------------------------------------------
+    # -- helpers -----------------------------------------------------------
     def _now(self) -> float:
         return float(self.get_clock().now().nanoseconds) * 1e-9
 
     def _elapsed(self) -> float:
         return self._now() - self._t0
+
+    def _peer_ids(self) -> list[str]:
+        # Convention (flagged for the team): interceptor ids are i1..iN.
+        count = self.config.interceptors.count
+        return [f"i{n}" for n in range(1, count + 1) if f"i{n}" != self.state.id]
 
     # -- callbacks (Comms hands these already-decoded) ---------------------
     def _on_assignments(self, assignments: list[Assignment]) -> None:
@@ -113,9 +142,21 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
 
     def _on_tracks(self, tracks: list[Track]) -> None:
         self.state.update_tracks(tracks)
+        self.picture.on_tracks(tracks)
 
     def _publish_state(self) -> None:
+        # Refresh our own entry in the picture, then broadcast.
+        self.picture.update_self(self.state.assigned_track_id, self.state.alive, self._elapsed())
         self.comms.publish(self._state_topic, self.state.to_state_msg(self._elapsed()))
+
+    def _check_awareness(self) -> None:
+        conflict = self.picture.has_coverage_conflict()
+        if conflict and not self._conflict_logged:
+            self.get_logger().info(
+                f"{self.state.id} coverage conflict: uncovered="
+                f"{sorted(self.picture.uncovered_active_tracks())}"
+            )
+        self._conflict_logged = conflict
 
     def _publish_waypoint(self) -> None:
         target = self.state.target()

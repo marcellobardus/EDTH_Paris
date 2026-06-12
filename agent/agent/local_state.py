@@ -45,7 +45,7 @@ class InterceptorLocalState:
         mine = select_assignment(assignments, self.id)
         if mine is None:
             return False
-        changed = (
+        changed = bool(
             mine.track_id != self.assigned_track_id
             or mine.initial_waypoint != self.initial_waypoint
         )

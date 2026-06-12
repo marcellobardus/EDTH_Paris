@@ -48,12 +48,75 @@ What it **is**: an **optimal-control / optimization problem** — choose the eng
 
 **Multi-threat extension → Challenge #2:** wrap each threat's optimal-engagement *value* into an assignment problem across interceptors — **Hungarian / max-flow** with engagement probability, range, and reload/ammo as costs; re-solve every tick (dynamic re-tasking). This is exactly #2's stated toolbox.
 
-## 3. Offline planning vs. online execution
+## 3. Offline planning vs. online execution (the core architecture)
 
-- **Offline (the "planning"):** sample the threat-state space (range × bearing × speed × heading); for each cell, solve the engagement optimization; store the result as (a) an optimal **firing policy** (commit decision + aim) lookup/interpolant, and (b) a precomputed **no-escape envelope** — the region from which a launch *guarantees* a kill before the boundary.
-- **Online (the "reflex"):** the live track indexes the policy; the station fires the instant the track enters the commit region, with the precomputed aim — no solver latency, no human. Re-solve / replan (MPC-style) only when the track deviates from prediction beyond a threshold.
+### 3.1 Why split at all
+
+The engagement loop must close inside the sensor-update budget — single-digit milliseconds — and it must **never stall**. But the decision it makes is the output of a heavy stochastic optimization: predict a maneuvering threat, Monte-Carlo its future, solve the intercept geometry, line-search the commit time against a chance constraint. You cannot run that every tick, and you must not let an autonomous weapon depend on a solver with variable runtime that can fail to converge mid-engagement.
+
+So TALOS splits the problem across **three timescales**:
+
+| Timescale | When it runs | What runs | Budget |
+|---|---|---|---|
+| **Offline (slow)** | at setup, and on slow-variable change | full global optimization → policy + envelopes + tables | seconds–minutes |
+| **Online (fast)** | every track update | lookup + commit check | < 1 ms |
+| **Online (exception)** | only on track deviation | warm-started *local* replan | tens of ms |
+
+The expensive thinking happens before the threat is in range; the trigger pull is a reflex; a cheap local re-solve covers the surprises. This is the **explicit/implicit MPC** pattern — a precomputed control law for the common case, a bounded online solve for the exceptions.
+
+### 3.2 What "offline" produces
+
+*Offline* means "computed ahead of the time-critical loop," not "disconnected." For the station's weapon + the defended asset's geometry, TALOS precomputes:
+
+1. **No-Escape Envelope (NEZ)** — the set of threat states (relative position, velocity, heading) from which a launch *guarantees* a kill before the keep-out boundary, with margin. A static volume for a fixed geometry — the headline visual *and* the graceful-degradation fallback.
+2. **Firing policy** `π(threat_state) → {commit?, aim, salvo}` — the optimal action for every discretized threat state. An *explicit* control law: the optimization solved once and tabulated.
+3. **Flyout / time-of-flight & `P_kill` tables**, keyed on launch geometry — so online you never integrate interceptor dynamics or recompute lethality; you read them off.
+4. **Launch-Acceptability Region (LAR)** — the set of feasible intercept points; bounds the commit decision.
+
+Because this stage is offline it can afford what the online loop cannot: dense Monte-Carlo over maneuver models, robust / chance-constrained optimization, full lethality modelling. **The quality of the decision is set here.**
+
+### 3.3 What "online" does
+
+Per track update (10–50 Hz):
+1. Estimate the current threat state + uncertainty from the new track point.
+2. **Index** the policy / NEZ — O(1) lookup + interpolation, *no optimization*.
+3. **Commit logic:** if the threat is inside the commit region **and** the latest-feasible-launch deadline has arrived → fire with the precomputed aim. Otherwise keep tracking.
+4. **Deviation gate:** compare the actual track to the trajectory the policy assumed. Within tolerance → trust the lookup. Beyond tolerance (unexpected maneuver, off-grid state) → trigger the exception path.
+
+The loop cost is dominated by the track filter, not the decision — the decision is a table read.
+
+### 3.4 The exception path (online replan)
+
+When reality leaves the precomputed manifold, TALOS does **not** rerun the full global sweep. It runs a **local, warm-started** re-solve: seed the optimizer with the nearest offline solution and take 1–2 MPC iterations to refine. Bounded time, fast convergence because it starts near-optimal. This is what stops a jinking Shahed from invalidating the plan while preserving the real-time guarantee.
+
+### 3.5 Staleness — when offline gets recomputed
+
+The policy is valid only under its assumptions (station position, ammo count, weapon health, wind/met, threat-class library). When a **slow** variable changes, a background process recomputes the policy and hot-swaps it — and because it's offline, a multi-second recompute is free. Triggers: emplacement, asset move, ammo depletion, met update, new threat type. **Fast** variables (the live track) are handled entirely by the online lookup. The design art is *which variables to bake into the offline policy vs. handle online*: TALOS bakes geometry & weapon characteristics, leaves kinematics to the lookup.
+
+### 3.6 Why this makes multi-threat (#2) tractable
+
+The payoff for Challenge #2: each threat's engagement *value* (max `E[P_kill]`, feasibility, time-window) is a **precomputed lookup**, not a nested optimization. So the online multi-interceptor assignment (Hungarian / max-flow) runs over N×M *cheap* values every tick instead of solving N×M intercept problems live. **Offline precompute is exactly what keeps the real-time coordination real-time.**
+
+### 3.7 The pitch, distilled
+
+- **Latency:** *"the trigger is microseconds because the thinking happened beforehand."*
+- **Certifiability:** *"no unbounded solver in the kill chain — the policy is verified offline, bounded-time online."*
+- **Robustness:** *"expensive uncertainty quantification we could never afford live is baked into the policy."*
+- **Graceful degradation:** *"compute-starved or sensors flaky? fall back to the no-escape envelope — in the zone, fire."*
 
 This separation **is** the differentiator: the hard optimization happens before the threat is in range; the trigger pull is O(microseconds).
+
+### 3.8 Mapping to Raspberry-Pi-class compute (the constraint this architecture is built for)
+
+Deployment target is a Raspberry Pi (Pi 5: 4× Cortex-A76 @ 2.4 GHz, 4–8 GB). This is exactly the hardware story the offline/online split exists for — and it forces a few concrete decisions:
+
+- **Offline runs *off* the Pi.** The expensive global optimization (Monte-Carlo, chance-constrained search, SciPy) runs on a laptop at setup — or is precomputed before the demo. The Pi only ever *loads the resulting tables*; it never runs the heavy solver.
+- **The online loop is trivial for a Pi.** Per tick: one track-filter update (Kalman, microseconds), one table lookup + interpolation (nanoseconds–microseconds), the commit check (a few comparisons). At 50 Hz that's well under 1 ms on a fraction of one core — leaving the other three cores free for multiple simultaneous threats.
+- **Keep the table small via symmetry.** A naive grid over full 3D position + velocity blows up memory. Exploit the station's rotational/translational symmetry: work in *relative* coordinates — range, aspect angle, closing speed (+ altitude band). The state space collapses from ~6D to ~3–4D: a 50×36×30 grid is ~54k cells × ~16 B ≈ **under 1 MB**, resident in RAM and cache-friendly. (Alternative: fit a few-KB polynomial / tiny MLP to the offline solutions — a forward pass is microseconds on a Pi.)
+- **Bound or drop the online replan.** The exception path (§3.4) is the only piece that would run optimization *on the Pi*. **Conservative choice: omit it** and instead pad the No-Escape Envelope with a margin sized for the worst-case maneuver — then even "surprises" are handled by pure lookup against a slightly conservative envelope, with **no solver in the loop at all**. If you keep the replan, cap it at a 1-D line search with a hard iteration/time budget. Either way the Pi never runs an unbounded solve.
+- **No heavy linear algebra, no per-tick allocation.** The hot path is table reads + a fixed-size filter. Preallocate; avoid Python object churn (NumPy arrays, or a small Cython/C core for the filter if needed). The decision is memory-bound, not compute-bound.
+
+**Net:** the Pi runs a *reflex* — read sensor, read table, maybe fire. Every genuine computation lives offline on a real machine. This is the strongest argument *for* the architecture: on weak hardware a solver-in-the-loop design **cannot** meet the real-time guarantee, while the precomputed-policy design runs comfortably with cores to spare.
 
 ## 4. Architecture / components
 
@@ -68,6 +131,8 @@ This separation **is** the differentiator: the hard optimization happens before 
 | `sim+viz/` | Python + web (React/Canvas or deck.gl) | 2D/3D engagement: threat track, predicted path + uncertainty cone, intercept point, interceptor flyout, **kill-prob-vs-commit-time curve**, commit indicator, no-escape envelope |
 
 Single process for predict+optimize+firecontrol; web frontend separate. Resist over-engineering.
+
+> **On-Pi vs off-Pi (see §3.8):** the offline stages — `optimize/`, `policy/`, and the Monte-Carlo in `predict/` — run on a laptop at setup and ship tables to the target. Only `trackin/`, the online `predict/` lookup, `firecontrol/`, `assign/`, and the viz run on the Raspberry Pi during the engagement.
 
 ## 5. Demo (4 min)
 

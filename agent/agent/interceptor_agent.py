@@ -36,37 +36,13 @@ from contracts.config import ScenarioConfig
 from contracts.messages import Assignment, Track, WaypointCommand
 from contracts.topics import Topics
 from rclpy.node import Node
-from rclpy.qos import (
-    QoSDurabilityPolicy,
-    QoSHistoryPolicy,
-    QoSProfile,
-    QoSReliabilityPolicy,
-)
-from std_msgs.msg import String
 
-from agent import guidance, serde
+from agent import guidance
+from agent.comms import LATCHED_QOS, Comms
 from agent.local_state import InterceptorLocalState
+from agent.packet_loss import PacketDropper, agent_seed
 
 DEFAULT_CONFIG_PATH = "config/scenario_default.yaml"
-
-# Latched, reliable: a late-joining agent still receives the one-shot
-# assignment. The GS publisher must declare the same durability to match.
-ASSIGNMENT_QOS = QoSProfile(
-    depth=1,
-    history=QoSHistoryPolicy.KEEP_LAST,
-    reliability=QoSReliabilityPolicy.RELIABLE,
-    durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-)
-
-# High-rate telemetry / command streams: latest-wins, no replay needed, so
-# VOLATILE is correct and cheaper than latching. Used for state out, tracks in,
-# and waypoints out. Publishers/subscribers must share this reliability to match.
-STREAM_QOS = QoSProfile(
-    depth=10,
-    history=QoSHistoryPolicy.KEEP_LAST,
-    reliability=QoSReliabilityPolicy.RELIABLE,
-    durability=QoSDurabilityPolicy.VOLATILE,
-)
 
 
 class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
@@ -88,37 +64,29 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         # Wall-clock-free time base: seconds since node start.
         self._t0 = self._now()
 
-        # Assignments from the Ground Station — Assignment[] in one std_msgs/String.
-        # TRANSIENT_LOCAL so a late start still receives the one-shot launch batch.
-        self.create_subscription(
-            String,
-            Topics.GS_ASSIGNMENTS,
-            self._on_assignments,
-            ASSIGNMENT_QOS,
+        # All messaging goes through Comms (the single ROS seam). Packet loss is
+        # seeded per-agent for reproducible-yet-uncorrelated drops (FR-7.2).
+        dropper = PacketDropper(
+            self.config.comms.packet_loss_prob,
+            agent_seed(self.config.scenario.seed, self.state.id),
         )
+        self.comms = Comms(self, dropper)
 
-        # Live tracks for guidance — Track[] (passive fusion continues post-launch).
-        self.create_subscription(
-            String,
-            Topics.GS_TRACKS,
-            self._on_tracks,
-            STREAM_QOS,
+        # GS topics are not lossy: assignments are latched (one-shot at launch),
+        # tracks are passive fusion. Peer topics (added in A4) will be lossy.
+        self.comms.subscribe_list(
+            Topics.GS_ASSIGNMENTS, Assignment, self._on_assignments, qos=LATCHED_QOS
         )
+        self.comms.subscribe_list(Topics.GS_TRACKS, Track, self._on_tracks)
 
         # 5 Hz state broadcast.
-        self._state_pub = self.create_publisher(
-            String,
-            Topics.interceptor_state(self.state.id),
-            STREAM_QOS,
-        )
+        self._state_topic = Topics.interceptor_state(self.state.id)
+        self.comms.advertise(self._state_topic)
         self.create_timer(1.0 / self.config.comms.publish_rate_hz, self._publish_state)
 
         # 10 Hz waypoint command to the simulation.
-        self._waypoint_pub = self.create_publisher(
-            String,
-            Topics.waypoint_command(self.state.id),
-            STREAM_QOS,
-        )
+        self._waypoint_topic = Topics.waypoint_command(self.state.id)
+        self.comms.advertise(self._waypoint_topic)
         self.create_timer(1.0 / self.config.guidance.update_rate_hz, self._publish_waypoint)
 
         self.get_logger().info(
@@ -134,22 +102,20 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
     def _elapsed(self) -> float:
         return self._now() - self._t0
 
-    # -- callbacks ---------------------------------------------------------
-    def _on_assignments(self, msg: String) -> None:
+    # -- callbacks (Comms hands these already-decoded) ---------------------
+    def _on_assignments(self, assignments: list[Assignment]) -> None:
         # Assignment[] batch; apply_assignments keeps only ours, ignores others'.
-        assignments = serde.decode_list(msg.data, Assignment)
         if self.state.apply_assignments(assignments):
             self.get_logger().info(
                 f"{self.state.id} assigned -> track {self.state.assigned_track_id}, "
                 f"initial_waypoint {self.state.initial_waypoint}"
             )
 
-    def _on_tracks(self, msg: String) -> None:
-        self.state.update_tracks(serde.decode_list(msg.data, Track))
+    def _on_tracks(self, tracks: list[Track]) -> None:
+        self.state.update_tracks(tracks)
 
     def _publish_state(self) -> None:
-        state = self.state.to_state_msg(self._elapsed())
-        self._state_pub.publish(String(data=serde.encode(state)))
+        self.comms.publish(self._state_topic, self.state.to_state_msg(self._elapsed()))
 
     def _publish_waypoint(self) -> None:
         target = self.state.target()
@@ -169,7 +135,7 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
             # No live track yet (or it's dead): hold the pre-launch waypoint.
             point = self.state.initial_waypoint or self.state.position
         cmd = WaypointCommand(self.state.id, point, self._elapsed())
-        self._waypoint_pub.publish(String(data=serde.encode(cmd)))
+        self.comms.publish(self._waypoint_topic, cmd)
 
 
 def main() -> None:

@@ -1,0 +1,50 @@
+services:
+  base:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    image: edth-base:latest
+
+  sim:
+    build:
+      context: .
+      dockerfile: sim/Dockerfile
+    image: edth-sim:latest
+    depends_on: [base]
+    network_mode: host          # ROS2 DDS needs host networking for cross-service topics
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+
+  gs:
+    build:
+      context: .
+      dockerfile: gs/Dockerfile
+    image: edth-gs:latest
+    depends_on: [base]
+    network_mode: host
+    volumes:
+      - ./config:/app/config:ro
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: edth-agent:latest
+    depends_on: [base]
+    network_mode: host
+    environment:
+      - INTERCEPTOR_ID=i1
+    volumes:
+      - ./config:/app/config:ro
+
+  viz:
+    build:
+      context: .
+      dockerfile: viz/Dockerfile
+    image: edth-viz:latest
+    depends_on: [base]
+    network_mode: host
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs

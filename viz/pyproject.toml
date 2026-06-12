@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "viz"
+version = "0.1.0"
+description = "Visualization, metrics logger, launch files — Team 4"
+requires-python = ">=3.12"
+dependencies = [
+    "contracts",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+]
+
+[tool.uv.sources]
+contracts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["viz"]

@@ -1,0 +1,34 @@
+scenario:
+  seed: 42
+  target_position: [500, 500, 0]
+  duration_max: 120
+  situation: B
+
+radars:
+  - position: [100, 100, 10]
+    range: 800
+    fov_deg: 360
+    noise_std: 5
+  - position: [400, 200, 10]
+    range: 600
+    fov_deg: 360
+    noise_std: 8
+
+shaheds:
+  count: 4
+  speed_mps: [15, 25]
+  spawn_radius: 1000
+  spawn_angle_spread_deg: 360
+
+interceptors:
+  count: 3
+  speed_mps: 40
+  max_turn_rate_deg_s: 30
+  range_m: 700
+  launch_position: [480, 480, 0]
+
+comms:
+  publish_rate_hz: 5
+  packet_loss_prob: 0.10
+  consensus_window_ms: 400
+  max_claim_rounds: 2

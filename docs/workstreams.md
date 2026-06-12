@@ -42,7 +42,7 @@ graph LR
 **Milestones:**
 | # | Deliverable |
 |---|---|
-| S1 | YAML config loads, PyBullet world initializes, Shaheds fly toward target |
+| S1 | YAML config loads, Gazebo world launches, Shaheds fly toward target |
 | S2 | Radar sensor publishes `/radar/detections` with Gaussian noise + FOV/range filtering |
 | S3 | Interceptor body accepts `WaypointCommand`, applies forces within kinematic limits |
 | S4 | Engagement detector fires `/simulation/engagement` on proximity threshold |
@@ -110,8 +110,8 @@ graph LR
 
 **Produces:**
 - `contracts/` module — the shared language for all teams (first deliverable)
-- ROS2 / ZeroMQ node setup and launch files
-- PyBullet 3D overlays (assignment lines, radar circles, labels)
+- ROS2 launch files and topic namespace setup
+- Gazebo 3D overlays (assignment lines, radar circles, labels via gz markers)
 - Dashboard (metrics window)
 - CSV metrics logger
 - `scenario_default.yaml` + Pydantic schema
@@ -122,9 +122,9 @@ graph LR
 | # | Deliverable |
 |---|---|
 | V1 | `contracts/` module merged and reviewed — **this unblocks all other teams** |
-| V2 | ROS2 launch file (or ZeroMQ broker) running, all topics discoverable |
+| V2 | ROS2 launch file running, all topics discoverable |
 | V3 | Dashboard skeleton reading live topics, displaying track count and assignment map |
-| V4 | PyBullet 3D overlays: interceptor lines, Shahed markers, radar circles, target marker |
+| V4 | Gazebo 3D overlays: interceptor lines, Shahed markers, radar circles, target marker |
 | V5 | CSV metrics logger writing per-run stats |
 | V6 | A vs B comparison report generated from CSV |
 

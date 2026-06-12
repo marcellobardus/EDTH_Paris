@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edth-paris"
+version = "0.1.0"
+description = "Real-time multi-interceptor coordination — EDTH Paris"
+requires-python = ">=3.12"
+dependencies = [
+    # Numerics & optimisation
+    "numpy>=1.26",
+    "scipy>=1.13",          # linear_sum_assignment (Hungarian algorithm)
+    # Config & validation
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    # NOTE: Gazebo (gz-sim) and ROS2 (rclpy, geometry_msgs, std_msgs …) are
+    # system packages — install them via:
+    #   sudo apt install ros-jazzy-desktop gz-harmonic ros-jazzy-ros-gz-bridge
+    # They are NOT listed here because they cannot be installed with pip.
+]
+
+[project.optional-dependencies]
+viz = [
+    "matplotlib>=3.8",      # dashboard + metrics plots
+    "pandas>=2.0",          # CSV metrics logger
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["contracts", "sim", "gs", "agent", "viz", "config"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# rclpy and gz bindings ship no stubs — silence missing-import errors for them
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

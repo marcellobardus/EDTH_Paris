@@ -10,7 +10,7 @@ Ground station is active pre-launch only. Post-launch, interceptors are fully au
 ```mermaid
 graph TD
     subgraph SIM["PC 1 — Simulation"]
-        PB[PyBullet World]
+        GZ[Gazebo World]
         ED[Shahed Agents]
         SM[Radar Sensor Model]
         ENG[Engagement Detector]
@@ -24,7 +24,7 @@ graph TD
             TF --> TA --> AO
         end
         subgraph VIZ["Visualization"]
-            V3D[3D View]
+            V3D[Gazebo GUI / 3D View]
             DB[Dashboard]
             CSV[Metrics Logger]
         end
@@ -40,8 +40,8 @@ graph TD
     AO -->|assignments at launch| AGENTS
     I1 <-->|"peer-to-peer (Sit. B)"| I2
     I2 <-->|"peer-to-peer (Sit. B)"| IN
-    AGENTS -->|waypoints| PB
-    PB -->|ground truth| V3D
+    AGENTS -->|waypoints| GZ
+    GZ -->|ground truth| V3D
     AGENTS -->|state| DB
     ENG -->|events| CSV
 ```
@@ -148,11 +148,11 @@ flowchart TD
 ### `sim/` — Simulation Engine (PC 1)
 ```
 sim/
-├── world.py              # PyBullet init, physics step loop
-├── shahed_agent.py       # Shahed: fly toward target at configurable speed
-├── interceptor_body.py   # PyBullet body: receives guidance waypoints, applies forces
+├── world.py              # Gazebo launch + ROS2 node init, physics step loop
+├── shahed_agent.py       # Shahed: fly toward target at configurable speed (ROS2 node)
+├── interceptor_body.py   # Gazebo model interface: receives waypoint topics, applies velocity cmds
 ├── radar_sensor.py       # Gaussian noise model, FOV/range filter
-├── engagement.py         # Proximity check → removes both bodies, emits event
+├── engagement.py         # Proximity check → despawns models, emits EngagementEvent
 └── config_loader.py      # Loads and validates YAML config
 ```
 
@@ -178,8 +178,8 @@ agent/
 ### `viz/` — Visualization (PC 2)
 ```
 viz/
-├── pybullet_viz.py   # 3D overlays: assignment lines, radar circles, labels
-├── dashboard.py      # Metrics window
+├── gz_viz.py         # Gazebo GUI overlays: assignment lines, radar circles, labels (via gz markers)
+├── dashboard.py      # Metrics window (matplotlib)
 └── metrics_logger.py # CSV: per-run stats
 ```
 

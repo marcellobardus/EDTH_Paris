@@ -12,6 +12,7 @@ services:
     image: edth-sim:latest
     depends_on: [base]
     network_mode: host          # ROS2 DDS needs host networking for cross-service topics
+    ipc: host                   # share /dev/shm so Fast DDS shared-memory transport works across containers
     ports:
       - "9002:9002"             # gz-sim websocket server (consumed by gzweb in the browser)
     volumes:
@@ -26,6 +27,7 @@ services:
     image: edth-sim:latest        # reuses the sim image (built by the `sim` service)
     depends_on: [sim]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     command: ["python3", "-m", "sim.driver"]
     volumes:
       - ./config:/app/config:ro
@@ -49,6 +51,7 @@ services:
     image: edth-gs:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     volumes:
       - ./config:/app/config:ro
 
@@ -61,6 +64,7 @@ services:
     image: edth-agent:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i1
     volumes:
@@ -70,6 +74,7 @@ services:
     image: edth-agent:latest
     depends_on: [agent1]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i2
     volumes:
@@ -79,6 +84,7 @@ services:
     image: edth-agent:latest
     depends_on: [agent1]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i3
     volumes:
@@ -91,6 +97,7 @@ services:
     image: edth-viz:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs

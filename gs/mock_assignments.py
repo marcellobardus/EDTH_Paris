@@ -28,13 +28,12 @@ import sys
 import time
 
 import yaml
-
 from contracts.config import ScenarioConfig
 from contracts.messages import Assignment, Track
 from contracts.topics import Topics
 
-
 # ── Config loading (handles nested YAML structure) ────────────────────────────
+
 
 def _load_config(path: str) -> ScenarioConfig:
     with open(path) as f:
@@ -47,8 +46,9 @@ def _load_config(path: str) -> ScenarioConfig:
 
 # ── Synthetic data generation ─────────────────────────────────────────────────
 
+
 def _make_tracks(cfg: ScenarioConfig, rng: random.Random, t: float) -> list[Track]:
-    tx, ty, tz = cfg.target_position
+    tx, ty, tz = cfg.scenario.target_position
     speed_min, speed_max = cfg.shaheds.speed_mps
     r = cfg.shaheds.spawn_radius
 
@@ -71,14 +71,16 @@ def _make_tracks(cfg: ScenarioConfig, rng: random.Random, t: float) -> list[Trac
         norm = math.sqrt(dx * dx + dy * dy + dz * dz)
         vx, vy, vz = dx / norm * speed, dy / norm * speed, dz / norm * speed
 
-        tracks.append(Track(
-            track_id=f"t{i + 1}",
-            position=(x, y, z),
-            velocity=(vx, vy, vz),
-            covariance=[row[:] for row in cov],
-            alive=True,
-            timestamp=t,
-        ))
+        tracks.append(
+            Track(
+                track_id=f"t{i + 1}",
+                position=(x, y, z),
+                velocity=(vx, vy, vz),
+                covariance=[row[:] for row in cov],
+                alive=True,
+                timestamp=t,
+            )
+        )
     return tracks
 
 
@@ -94,15 +96,14 @@ def _assign(cfg: ScenarioConfig, tracks: list[Track], t: float) -> list[Assignme
         interceptor_id = f"i{i + 1}"
 
         # Pick track closest to launch position (greedy proxy for Hungarian)
-        target = min(available, key=lambda tr: math.sqrt(
-            (tr.position[0] - lx) ** 2 + (tr.position[1] - ly) ** 2
-        ))
+        target = min(
+            available,
+            key=lambda tr: math.sqrt((tr.position[0] - lx) ** 2 + (tr.position[1] - ly) ** 2),
+        )
         available.remove(target)
 
         # Initial waypoint: intercept point at half the estimated flight time
-        dist_to_track = math.sqrt(
-            (target.position[0] - lx) ** 2 + (target.position[1] - ly) ** 2
-        )
+        dist_to_track = math.sqrt((target.position[0] - lx) ** 2 + (target.position[1] - ly) ** 2)
         intercept_time = dist_to_track / cfg.interceptors.speed_mps
         half_t = intercept_time / 2
 
@@ -110,17 +111,20 @@ def _assign(cfg: ScenarioConfig, tracks: list[Track], t: float) -> list[Assignme
         wy = target.position[1] + target.velocity[1] * half_t
         wz = target.position[2] + target.velocity[2] * half_t
 
-        assignments.append(Assignment(
-            interceptor_id=interceptor_id,
-            track_id=target.track_id,
-            initial_waypoint=(wx, wy, wz),
-            timestamp=t,
-        ))
+        assignments.append(
+            Assignment(
+                interceptor_id=interceptor_id,
+                track_id=target.track_id,
+                initial_waypoint=(wx, wy, wz),
+                timestamp=t,
+            )
+        )
 
     return assignments
 
 
 # ── Transport: stdout ─────────────────────────────────────────────────────────
+
 
 def run_stdout(cfg: ScenarioConfig, seed: int, repeat: float) -> None:
     rng = random.Random(seed)
@@ -147,6 +151,7 @@ def run_stdout(cfg: ScenarioConfig, seed: int, repeat: float) -> None:
 
 
 # ── Transport: ROS2 ───────────────────────────────────────────────────────────
+
 
 def run_ros2(cfg: ScenarioConfig, seed: int, repeat: float) -> None:
     import rclpy
@@ -194,6 +199,7 @@ def run_ros2(cfg: ScenarioConfig, seed: int, repeat: float) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -211,8 +217,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = _load_config(args.config)
-    seed = args.seed if args.seed is not None else cfg.seed
+    cfg = ScenarioConfig.from_yaml(args.config)
+    seed = args.seed if args.seed is not None else cfg.scenario.seed
 
     if args.transport == "ros2":
         run_ros2(cfg, seed, args.repeat)

@@ -1,0 +1,488 @@
+<?xml version="1.0" ?>
+<!--
+  EDTH Paris — Intercept Scenario World
+  Terrain: 5 km × 5 km, up to 50 m elevation (heightmap PNG generated at build time)
+  Models:
+    interceptor_1/2/3  — quadtailsitter-style VTOL, 3 kg, controlled via /interceptor_N/cmd_vel
+    shahed_1/2/3/4     — delta-wing loitering munitions, 200 kg, moved via set_pose service
+
+  Asset paths are substituted at launch time by sim/sim/world.py:
+    __TERRAIN_HEIGHTMAP__  →  /abs/path/to/assets/heightmap.png
+    __TERRAIN_GRASS__      →  /abs/path/to/assets/grass_diffuse.png
+    __TERRAIN_NORMAL__     →  /abs/path/to/assets/flat_normal.png
+-->
+<sdf version="1.9">
+  <world name="intercept_scenario">
+
+    <!-- ── Physics ─────────────────────────────────────────────────────── -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- ── System plugins ──────────────────────────────────────────────── -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- ── Scene: sky, ambient, shadows ────────────────────────────────── -->
+    <scene>
+      <sky>
+        <time>10</time>
+        <sunrise>6</sunrise>
+        <sunset>20</sunset>
+        <clouds>
+          <speed>8</speed>
+          <direction>0.5</direction>
+          <humidity>0.4</humidity>
+          <mean_size>0.5</mean_size>
+          <ambient>0.9 0.9 0.9 1</ambient>
+        </clouds>
+      </sky>
+      <ambient>0.5 0.5 0.5 1</ambient>
+      <background>0.6 0.78 0.95 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- ── Sun ──────────────────────────────────────────────────────────── -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 500 0 0 0</pose>
+      <diffuse>0.95 0.90 0.80 1</diffuse>
+      <specular>0.30 0.30 0.30 1</specular>
+      <direction>-0.45 0.15 -0.87</direction>
+    </light>
+
+    <!-- ── Ground plane ────────────────────────────────────────────────── -->
+    <!-- Flat box replaces the heightmap: gzweb SDFParser does not support
+         heightmap geometry and throws silently, blocking scene rendering. -->
+    <model name="terrain">
+      <static>true</static>
+      <link name="link">
+        <pose>0 0 -0.05 0 0 0</pose>
+
+        <collision name="collision">
+          <geometry><box><size>5000 5000 0.1</size></box></geometry>
+        </collision>
+
+        <visual name="visual">
+          <geometry><box><size>5000 5000 0.1</size></box></geometry>
+          <material>
+            <ambient>0.30 0.48 0.25 1</ambient>
+            <diffuse>0.32 0.50 0.27 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+
+      </link>
+    </model>
+
+    <!-- ================================================================
+         INTERCEPTORS — quadtailsitter-style VTOL, 3 kg
+         Spawn at the launch-pad cluster around (480, 480) from config.
+         Controlled via /interceptor_N/cmd_vel  (Twist, m/s + rad/s).
+
+         Rotor layout (top-down, hover orientation):
+              0 (CCW)  2 (CW)
+                 [body]
+              3 (CW)   1 (CCW)
+    ================================================================ -->
+
+    <!-- ── Interceptor 1 ────────────────────────────────────────────── -->
+    <model name="interceptor_1">
+      <pose>480 430 0.2 0 0 0.785</pose>
+
+      <link name="base_link">
+        <inertial>
+          <mass>3.0</mass>
+          <inertia>
+            <ixx>0.1274</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.0806</iyy><iyz>0</iyz>
+            <izz>0.1981</izz>
+          </inertia>
+        </inertial>
+
+        <!-- Fuselage -->
+        <collision name="fuselage_col">
+          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
+        </collision>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry>
+            <mesh>
+              <uri>model://quadtailsitter/meshes/body.dae</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+
+      <!-- Rotor 0: front-left, CCW -->
+      <link name="rotor_0">
+        <pose>0.22 -0.30 0.08 0 0 0</pose>
+        <inertial>
+          <mass>0.025</mass>
+          <inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
+        <visual name="vis">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry>
+        </visual>
+      </link>
+      <joint name="rotor_0_joint" type="revolute">
+        <parent>base_link</parent><child>rotor_0</child>
+        <axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+      </joint>
+
+      <!-- Rotor 1: back-right, CCW -->
+      <link name="rotor_1">
+        <pose>-0.22 0.30 0.08 0 0 0</pose>
+        <inertial>
+          <mass>0.025</mass>
+          <inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
+        <visual name="vis">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry>
+        </visual>
+      </link>
+      <joint name="rotor_1_joint" type="revolute">
+        <parent>base_link</parent><child>rotor_1</child>
+        <axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+      </joint>
+
+      <!-- Rotor 2: front-right, CW -->
+      <link name="rotor_2">
+        <pose>0.22 0.30 0.08 0 0 0</pose>
+        <inertial>
+          <mass>0.025</mass>
+          <inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
+        <visual name="vis">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry>
+        </visual>
+      </link>
+      <joint name="rotor_2_joint" type="revolute">
+        <parent>base_link</parent><child>rotor_2</child>
+        <axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+      </joint>
+
+      <!-- Rotor 3: back-left, CW -->
+      <link name="rotor_3">
+        <pose>-0.22 -0.30 0.08 0 0 0</pose>
+        <inertial>
+          <mass>0.025</mass>
+          <inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz>
+                   <iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia>
+        </inertial>
+        <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
+        <visual name="vis">
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry>
+        </visual>
+      </link>
+      <joint name="rotor_3_joint" type="revolute">
+        <parent>base_link</parent><child>rotor_3</child>
+        <axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+      </joint>
+
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>interceptor_1</robotNamespace>
+        <jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName>
+        <turningDirection>ccw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
+        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>interceptor_1</robotNamespace>
+        <jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName>
+        <turningDirection>ccw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
+        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>interceptor_1</robotNamespace>
+        <jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName>
+        <turningDirection>cw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
+        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      </plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>interceptor_1</robotNamespace>
+        <jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName>
+        <turningDirection>cw</turningDirection>
+        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
+        <maxRotVelocity>800.0</maxRotVelocity>
+        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
+        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber>
+        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
+        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
+      </plugin>
+
+      <plugin filename="gz-sim-multicopter-control-system"
+              name="gz::sim::systems::MulticopterVelocityControl">
+        <robotNamespace>interceptor_1</robotNamespace>
+        <commandSubTopic>cmd_vel</commandSubTopic>
+        <enableSubTopic>enable</enableSubTopic>
+        <comLinkName>base_link</comLinkName>
+        <velocityGain>2.7 2.7 2.7</velocityGain>
+        <attitudeGain>2 3 0.15</attitudeGain>
+        <angularRateGain>0.4 0.52 0.18</angularRateGain>
+        <maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+        <rotorConfiguration>
+          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+        </rotorConfiguration>
+      </plugin>
+
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odomTopic>odometry</odomTopic>
+        <robotBaseFrame>base_link</robotBaseFrame>
+      </plugin>
+
+    </model>
+
+    <!-- ── Interceptor 2 ────────────────────────────────────────────── -->
+    <model name="interceptor_2">
+      <pose>480 480 0.2 0 0 0.785</pose>
+
+      <link name="base_link">
+        <inertial>
+          <mass>3.0</mass>
+          <inertia>
+            <ixx>0.1274</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.0806</iyy><iyz>0</iyz>
+            <izz>0.1981</izz>
+          </inertia>
+        </inertial>
+        <collision name="fuselage_col">
+          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
+        </collision>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/body.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+        </visual>
+      </link>
+
+      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_0_joint" type="revolute"><parent>base_link</parent><child>rotor_0</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_1_joint" type="revolute"><parent>base_link</parent><child>rotor_1</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_2_joint" type="revolute"><parent>base_link</parent><child>rotor_2</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+
+      <plugin filename="gz-sim-multicopter-control-system" name="gz::sim::systems::MulticopterVelocityControl">
+        <robotNamespace>interceptor_2</robotNamespace>
+        <commandSubTopic>cmd_vel</commandSubTopic><enableSubTopic>enable</enableSubTopic>
+        <comLinkName>base_link</comLinkName>
+        <velocityGain>2.7 2.7 2.7</velocityGain><attitudeGain>2 3 0.15</attitudeGain>
+        <angularRateGain>0.4 0.52 0.18</angularRateGain><maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+        <rotorConfiguration>
+          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+        </rotorConfiguration>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher"><odomTopic>odometry</odomTopic><robotBaseFrame>base_link</robotBaseFrame></plugin>
+
+    </model>
+
+    <!-- ── Interceptor 3 ────────────────────────────────────────────── -->
+    <model name="interceptor_3">
+      <pose>480 530 0.2 0 0 0.785</pose>
+
+      <link name="base_link">
+        <inertial>
+          <mass>3.0</mass>
+          <inertia>
+            <ixx>0.1274</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.0806</iyy><iyz>0</iyz>
+            <izz>0.1981</izz>
+          </inertia>
+        </inertial>
+        <collision name="fuselage_col">
+          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
+        </collision>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/body.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
+        </visual>
+      </link>
+
+      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_0_joint" type="revolute"><parent>base_link</parent><child>rotor_0</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_1_joint" type="revolute"><parent>base_link</parent><child>rotor_1</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_2_joint" type="revolute"><parent>base_link</parent><child>rotor_2</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
+      <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
+
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
+
+      <plugin filename="gz-sim-multicopter-control-system" name="gz::sim::systems::MulticopterVelocityControl">
+        <robotNamespace>interceptor_3</robotNamespace>
+        <commandSubTopic>cmd_vel</commandSubTopic><enableSubTopic>enable</enableSubTopic>
+        <comLinkName>base_link</comLinkName>
+        <velocityGain>2.7 2.7 2.7</velocityGain><attitudeGain>2 3 0.15</attitudeGain>
+        <angularRateGain>0.4 0.52 0.18</angularRateGain><maximumLinearAcceleration>2 2 2</maximumLinearAcceleration>
+        <rotorConfiguration>
+          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
+          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
+        </rotorConfiguration>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher"><odomTopic>odometry</odomTopic><robotBaseFrame>base_link</robotBaseFrame></plugin>
+
+    </model>
+
+    <!-- ================================================================
+         SHAHED THREATS — delta-wing loitering munitions, 200 kg, static.
+         Positioned at ~1000 m radius from origin, heading toward target
+         at (500, 500, 0).  The sim package moves them via the gz
+         /world/intercept_scenario/set_pose service each control tick.
+
+         Yaw angles (heading toward target):
+           shahed_1 (700, 700, 80):    atan2(-200,-200) = -2.356 rad (SW)
+           shahed_2 (-700, 700, 100):  atan2(-200,1200) = -0.165 rad (E-ish)
+           shahed_3 (900, -300, 90):   atan2(800,-400)  =  2.034 rad (NW-ish)
+           shahed_4 (-200, -950, 110): atan2(1450,700)  =  1.120 rad (NNE)
+    ================================================================ -->
+
+    <!-- ── Shahed 1 (northeast, heading SW toward target) ────────────── -->
+    <model name="shahed_1">
+      <static>true</static>
+      <pose>700 700 80 0 0 -2.356</pose>
+
+      <link name="base_link">
+        <inertial>
+          <mass>200.0</mass>
+          <inertia>
+            <ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>104.2</iyy><iyz>0</iyz>
+            <izz>114.9</izz>
+          </inertia>
+        </inertial>
+
+        <!-- Central fuselage -->
+        <collision name="body_col">
+          <geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry>
+        </collision>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry>
+            <mesh>
+              <scale>0.001 0.001 0.001</scale>
+              <uri>model://standard_vtol/meshes/x8_wing.dae</uri>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Shahed 2 (northwest, heading E toward target) ─────────────── -->
+    <model name="shahed_2">
+      <static>true</static>
+      <pose>-700 700 100 0 0 -0.165</pose>
+
+      <link name="base_link">
+        <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
+        <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Shahed 3 (east-southeast, heading NW toward target) ───────── -->
+    <model name="shahed_3">
+      <static>true</static>
+      <pose>900 -300 90 0 0 2.034</pose>
+
+      <link name="base_link">
+        <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
+        <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Shahed 4 (south-southwest, heading NNE toward target) ─────── -->
+    <model name="shahed_4">
+      <static>true</static>
+      <pose>-200 -950 110 0 0 1.120</pose>
+
+      <link name="base_link">
+        <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
+        <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

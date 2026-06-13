@@ -18,12 +18,27 @@ services:
       - ./config:/app/config:ro
       - ./logs:/app/logs
 
+  # Kinematic loop that closes the agent control loop: consumes interceptor
+  # waypoints, integrates motion, and feeds back /simulation/ground_truth +
+  # /radar/detections + /simulation/engagement. Emits perfect-sensor /gs/tracks
+  # and a one-shot /gs/assignments until the real GS lands (pass --no-gs to stop).
+  driver:
+    image: edth-sim:latest        # reuses the sim image (built by the `sim` service)
+    depends_on: [sim]
+    network_mode: host
+    command: ["python3", "-m", "sim.driver"]
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+
   gzweb:
     build:
       context: gzweb
       dockerfile: Dockerfile
       network: host             # git clone needs host network during build
     image: edth-gzweb:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:80"               # open http://localhost:8080 to view the simulation
 
@@ -37,7 +52,9 @@ services:
     volumes:
       - ./config:/app/config:ro
 
-  agent:
+  # One process per interceptor (config interceptors.count = 3). Only agent1
+  # carries the build; agent2/agent3 reuse the tagged image it produces.
+  agent1:
     build:
       context: .
       dockerfile: agent/Dockerfile
@@ -46,6 +63,24 @@ services:
     network_mode: host
     environment:
       - INTERCEPTOR_ID=i1
+    volumes:
+      - ./config:/app/config:ro
+
+  agent2:
+    image: edth-agent:latest
+    depends_on: [agent1]
+    network_mode: host
+    environment:
+      - INTERCEPTOR_ID=i2
+    volumes:
+      - ./config:/app/config:ro
+
+  agent3:
+    image: edth-agent:latest
+    depends_on: [agent1]
+    network_mode: host
+    environment:
+      - INTERCEPTOR_ID=i3
     volumes:
       - ./config:/app/config:ro
 

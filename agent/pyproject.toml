@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "contracts",
     "numpy>=1.26",
+    "pyzmq>=26.0",          # ZmqBus — cross-process pub/sub without ROS2
 ]
 
 [tool.uv.sources]

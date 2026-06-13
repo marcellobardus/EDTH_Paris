@@ -238,8 +238,10 @@ def main() -> None:
     )
     p.add_argument(
         "--assignments-addr",
-        default="tcp://127.0.0.1:5558",
-        help="assignment node's GS_ASSIGNMENTS PUB address (we connect)",
+        default=None,
+        help="separate GS_ASSIGNMENTS PUB address for a standalone assignment_node "
+        "(e.g. tcp://127.0.0.1:5558). Default: assignments ride the tracks socket, "
+        "as published by `gs_node --assign`.",
     )
     p.add_argument("--interval", type=int, default=200, help="ms per redraw")
     p.add_argument(
@@ -311,8 +313,13 @@ def main() -> None:
     bus = ZmqBus(args.tracks_addr, bind=False)  # GS binds PUB; we connect SUB
     bus.subscribe(Topics.GS_TRACKS, Track, viewer.on_track)
     bus.subscribe(Topics.GS_THREATS, ThreatAssessment, viewer.on_threat)
-    assign_bus = ZmqBus(args.assignments_addr, bind=False)  # assignment node binds PUB
-    assign_bus.subscribe(Topics.GS_ASSIGNMENTS, Assignment, viewer.on_assignment)
+    bus.subscribe(Topics.GS_ASSIGNMENTS, Assignment, viewer.on_assignment)
+    extra_buses = []
+    # A standalone assignment_node publishes on its own socket — subscribe there too.
+    if args.assignments_addr and args.assignments_addr != args.tracks_addr:
+        assign_bus = ZmqBus(args.assignments_addr, bind=False)
+        assign_bus.subscribe(Topics.GS_ASSIGNMENTS, Assignment, viewer.on_assignment)
+        extra_buses.append(assign_bus)
 
     matplotlib.use("macosx", force=True)
     from matplotlib.animation import FuncAnimation
@@ -321,8 +328,9 @@ def main() -> None:
     fig.patch.set_facecolor("#0b1021")
 
     def update(_frame):
-        bus.spin(timeout_ms=10)  # drain waiting tracks + threats
-        assign_bus.spin(timeout_ms=0)  # drain waiting assignments
+        bus.spin(timeout_ms=10)  # drain waiting tracks + threats + assignments
+        for b in extra_buses:
+            b.spin(timeout_ms=0)  # standalone assignment_node socket, if any
         viewer.expire()
         viewer.render(ax)
 

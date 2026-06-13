@@ -395,6 +395,7 @@ dependencies = [
     { name = "contracts" },
     { name = "numpy" },
     { name = "scipy" },
+    { name = "stonesoup" },
 ]
 
 [package.metadata]
@@ -402,6 +403,7 @@ requires-dist = [
     { name = "contracts", editable = "contracts" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "scipy", specifier = ">=1.13" },
+    { name = "stonesoup", specifier = ">=1.2" },
 ]
 
 [[package]]

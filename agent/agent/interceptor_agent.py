@@ -35,6 +35,8 @@ import rclpy
 from contracts.config import ScenarioConfig
 from contracts.messages import (
     Assignment,
+    Claim,
+    Commit,
     EngagementEvent,
     InterceptorState,
     Track,
@@ -48,8 +50,13 @@ from agent.awareness import AwarenessPicture
 from agent.comms import LATCHED_QOS, Comms
 from agent.local_state import InterceptorLocalState
 from agent.packet_loss import PacketDropper, agent_seed
+from agent.retasking import RetaskingProtocol
 
 DEFAULT_CONFIG_PATH = "config/scenario_default.yaml"
+
+# Claim-and-confirm FSM driver rate. Faster than the 2 Hz awareness logger so
+# the ~400 ms consensus window resolves promptly (A5 deadline, not a sleep).
+RETASK_TICK_HZ = 10.0
 
 
 class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
@@ -82,6 +89,17 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         # Local awareness picture, built from peer broadcasts (FR-7.3).
         self.picture = AwarenessPicture(self.state.id, self.config.comms.staleness_timeout_s)
 
+        # Claim-and-confirm re-tasking (A5, FR-8). Pure FSM; the node owns the
+        # Comms seam and feeds it peer claims/commits plus a periodic tick.
+        self.retask = RetaskingProtocol(
+            self.state,
+            self.picture,
+            consensus_window_s=self.config.comms.consensus_window_ms / 1000.0,
+            max_claim_rounds=self.config.comms.max_claim_rounds,
+            emit_claim=self._publish_claim,
+            emit_commit=self._publish_commit,
+        )
+
         # GS topics are not lossy: assignments are latched (one-shot at launch),
         # tracks are passive fusion. Peer topics ARE lossy (FR-7.2).
         self.comms.subscribe_list(
@@ -90,13 +108,20 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         self.comms.subscribe_list(Topics.GS_TRACKS, Track, self._on_tracks)
         self.comms.subscribe(Topics.ENGAGEMENT, EngagementEvent, self.picture.on_engagement)
 
-        # Peer state broadcasts (all other interceptors). Convention: ids i1..iN.
+        # Peer state broadcasts + claim/commit (all other interceptors).
+        # Convention: ids i1..iN. Peer channels are lossy (FR-7.2).
         for peer_id in self._peer_ids():
             self.comms.subscribe(
                 Topics.interceptor_state(peer_id),
                 InterceptorState,
                 self.picture.on_peer_state,
                 lossy=True,
+            )
+            self.comms.subscribe(
+                Topics.interceptor_claim(peer_id), Claim, self.retask.on_peer_claim, lossy=True
+            )
+            self.comms.subscribe(
+                Topics.interceptor_commit(peer_id), Commit, self.retask.on_peer_commit, lossy=True
             )
 
         # 5 Hz state broadcast.
@@ -109,9 +134,19 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         self.comms.advertise(self._waypoint_topic)
         self.create_timer(1.0 / self.config.guidance.update_rate_hz, self._publish_waypoint)
 
-        # 2 Hz awareness check (A4 logs conflicts; A5 will act on them).
+        # Peer-to-peer claim/commit broadcast (A5). Same lossy peer channels.
+        self._claim_topic = Topics.interceptor_claim(self.state.id)
+        self._commit_topic = Topics.interceptor_commit(self.state.id)
+        self.comms.advertise(self._claim_topic)
+        self.comms.advertise(self._commit_topic)
+
+        # 2 Hz awareness check (A4 conflict log).
         self._conflict_logged = False
         self.create_timer(0.5, self._check_awareness)
+
+        # Drive the claim-and-confirm FSM (A5). The consensus window is a
+        # deadline re-read here, never a blocking sleep (single-threaded executor).
+        self.create_timer(1.0 / RETASK_TICK_HZ, self._retask_tick)
 
         self.get_logger().info(
             f"{self.state.id} up: launch={self.state.position}, "
@@ -157,6 +192,17 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
                 f"{sorted(self.picture.uncovered_active_tracks())}"
             )
         self._conflict_logged = conflict
+
+    def _retask_tick(self) -> None:
+        self.retask.tick(self._elapsed())
+
+    def _publish_claim(self, claim: Claim) -> None:
+        self.comms.publish(self._claim_topic, claim)
+        self.get_logger().info(f"{self.state.id} CLAIM -> {claim.target_track_id}")
+
+    def _publish_commit(self, commit: Commit) -> None:
+        self.comms.publish(self._commit_topic, commit)
+        self.get_logger().info(f"{self.state.id} COMMIT -> {commit.target_track_id}")
 
     def _publish_waypoint(self) -> None:
         target = self.state.target()

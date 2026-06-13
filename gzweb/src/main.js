@@ -1,9 +1,11 @@
 import { SceneManager } from 'gzweb';
 
 const params = new URLSearchParams(window.location.search);
-const wsUrl = params.get('ws') ?? 'ws://localhost:9002';
+const defaultWs = `ws://${window.location.hostname}:9002`;
+const wsUrl = params.get('ws') ?? defaultWs;
 
 const statusEl = document.getElementById('status');
+statusEl.textContent = `Connecting to ${wsUrl}…`;
 
 const sceneMgr = new SceneManager({
   elementId: 'gz-scene',
@@ -11,5 +13,7 @@ const sceneMgr = new SceneManager({
 });
 
 sceneMgr.getConnectionStatusAsObservable().subscribe((ready) => {
-  statusEl.textContent = ready ? `Connected — ${wsUrl}` : `Connecting to ${wsUrl}…`;
+  const status = sceneMgr.getConnectionStatus();
+  statusEl.textContent = status;
+  statusEl.style.color = ready ? '#4f4' : (status === 'error' ? '#f44' : '#ccc');
 });

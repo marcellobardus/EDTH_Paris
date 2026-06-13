@@ -11,6 +11,8 @@ dependencies = [
     "contracts",
     "matplotlib>=3.8",
     "pandas>=2.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [tool.uv.sources]

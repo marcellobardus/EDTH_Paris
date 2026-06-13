@@ -101,3 +101,20 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
+
+  # ROS2 -> HTTP bridge feeding the web dashboard (viz/dashboard/src/real_api.ts).
+  # Subscribes to the live bus and serves /api/* on :8000. The sim nodes already
+  # run as their own compose services, so the Run/Reset buttons must NOT spawn
+  # duplicates: VIZ_SPAWN_SIM=0. The Vite dev server proxies /api here.
+  viz-api:
+    image: edth-viz:latest        # reuses the viz image (built by the `viz` service)
+    depends_on: [viz]
+    network_mode: host
+    command: ["python3", "-m", "viz.bridge"]
+    environment:
+      - VIZ_SPAWN_SIM=0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs

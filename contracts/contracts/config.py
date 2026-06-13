@@ -59,4 +59,9 @@ class ScenarioConfig(BaseModel):
     @classmethod
     def from_yaml(cls, path: str) -> ScenarioConfig:
         with open(path) as f:
-            return cls(**yaml.safe_load(f))
+            raw = yaml.safe_load(f)
+        # The YAML groups the scenario-level fields under a `scenario:` block
+        # (see config/scenario_default.yaml and the docs); flatten it so the
+        # flat model fields (seed, situation, ...) resolve.
+        scenario = raw.pop("scenario", {})
+        return cls(**scenario, **raw)

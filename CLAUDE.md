@@ -64,16 +64,16 @@ All inter-process communication is ROS2 pub/sub with **both `network_mode: host`
 
 **In-flight flow** (Situation B, GS role ends at launch):
 ```
-/interceptors/{id}/state  (5 Hz broadcast to all peers)
-/interceptors/{id}/claim  (during re-tasking)
-/interceptors/{id}/commit (after consensus)
+/interceptors/{id}/state  (5 Hz broadcast to all peers — carries ownership + priority key + lock)
 /interceptors/{id}/waypoint → simulation (10 Hz, PN pursuit point)
 ```
+Re-tasking is **CBAA** (consensus-by-broadcast): there is no claim/commit
+channel. The single `/state` message *is* the protocol — see "Re-tasking" below.
 
 ### Contracts Module (`contracts/`)
 
 Three files — import from here only:
-- `messages.py` — all dataclasses: `RadarDetection`, `Track`, `ThreatAssessment`, `Assignment`, `InterceptorState`, `Claim`, `Commit`, `WaypointCommand`
+- `messages.py` — all dataclasses: `RadarDetection`, `Track`, `ThreatAssessment`, `Assignment`, `InterceptorState` (extended for CBAA: `owns_priority`, `locked`, `seq`), `WaypointCommand`
 - `topics.py` — `Topics` class with static attributes and helper methods (`Topics.interceptor_state("i1")`)
 - `config.py` — `ScenarioConfig` Pydantic model; load with `ScenarioConfig.from_yaml("config/scenario_default.yaml")`
 
@@ -89,7 +89,14 @@ omega = cross(R, R_dot) / dot(R, R)   # LOS angular rate
 a_cmd = N * self_speed * omega         # N ≈ 3–5
 ```
 
-**Claim-and-Confirm** (`agent/`): interceptor broadcasts `Claim`, waits 400 ms for competing claims, yields to higher `interceptor_id`, then broadcasts `Commit`. Falls back to greedy (closest uncovered track) after 2 failed rounds or under sustained packet loss.
+**Re-tasking — CBAA, stale-safe** (`agent/retasking.py`): no claim/commit, no consensus window. Each interceptor broadcasts which track it `owns` plus a self-computed **priority key** `(affinity_bucket, danger, id_rank)` (lexicographic, larger wins). Ownership is decided by a total order on that key, so it converges by re-broadcast instead of by rounds:
+- `affinity_bucket = frozen_threat / (intercept_bucket + 1)` — the intercept time is *bucketed with hysteresis* so estimate jitter never reorders the key.
+- Peers **never recompute** a peer's key; they compare the transmitted `owns_priority` directly.
+- **Monotone lock**: once `intercept_time < lock_threshold` the owner locks and never yields (terminal guidance is uninterruptible).
+- **Stale-safe**: a silent peer keeps covering its last track until `silence_timeout` (then awareness frees it); an out-of-order packet (lower `seq`) is dropped.
+- **Loss robustness**: a changed state is re-emitted `change_repeat`× and a heartbeat goes out every cycle, so peers reconverge after drops.
+
+Tunables live in the `retasking:` block of the scenario YAML (`RetaskingConfig`).
 
 ### Scenario Config
 

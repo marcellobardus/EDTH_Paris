@@ -20,9 +20,11 @@ Q3), and publish a WaypointCommand at guidance.update_rate_hz (10 Hz) on
 /interceptors/{id}/waypoint. The waypoint is the PN "carrot" (see guidance.py),
 falling back to the initial_waypoint when no live track is available.
 
-The comms wrapper (A3), awareness (A4) and claim-and-confirm (A5) build on this.
-The pure logic in local_state.py / serde.py / guidance.py stays unit-testable
-without a ROS2 install.
+The comms wrapper (A3), awareness (A4) and CBAA re-tasking (A5) build on this.
+A5 collapses the old claim/commit pair into the single InterceptorState
+broadcast: the decision tick decides ownership AND emits, so one timer at the
+decision period (5 Hz) drives both. The pure logic in local_state.py /
+serde.py / guidance.py / retasking.py stays unit-testable without a ROS2 install.
 
 Run: INTERCEPTOR_ID=i1 python3 -m agent.interceptor_agent
 """
@@ -35,8 +37,6 @@ import rclpy
 from contracts.config import ScenarioConfig
 from contracts.messages import (
     Assignment,
-    Claim,
-    Commit,
     EngagementEvent,
     GroundTruthObject,
     InterceptorState,
@@ -54,10 +54,6 @@ from agent.packet_loss import PacketDropper, agent_seed
 from agent.retasking import RetaskingProtocol
 
 DEFAULT_CONFIG_PATH = "config/scenario_default.yaml"
-
-# Claim-and-confirm FSM driver rate. Faster than the 2 Hz awareness logger so
-# the ~400 ms consensus window resolves promptly (A5 deadline, not a sleep).
-RETASK_TICK_HZ = 10.0
 
 
 class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
@@ -87,18 +83,32 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         )
         self.comms = Comms(self, dropper)
 
-        # Local awareness picture, built from peer broadcasts (FR-7.3).
-        self.picture = AwarenessPicture(self.state.id, self.config.comms.staleness_timeout_s)
+        # Local awareness picture, built from peer broadcasts (FR-7.3). The
+        # protected point weights the CBAA priority key (danger tie-break).
+        self.picture = AwarenessPicture(
+            self.state.id,
+            self.config.comms.staleness_timeout_s,
+            protected_point=self.config.scenario.target_position,
+        )
 
-        # Claim-and-confirm re-tasking (A5, FR-8). Pure FSM; the node owns the
-        # Comms seam and feeds it peer claims/commits plus a periodic tick.
+        # CBAA decentralised re-tasking (A5, FR-8). Pure engine; the node owns
+        # the Comms seam and feeds it peer state (via the picture) plus a
+        # periodic tick. Its only output is the InterceptorState broadcast.
+        rt = self.config.retasking
         self.retask = RetaskingProtocol(
             self.state,
             self.picture,
-            consensus_window_s=self.config.comms.consensus_window_ms / 1000.0,
-            max_claim_rounds=self.config.comms.max_claim_rounds,
-            emit_claim=self._publish_claim,
-            emit_commit=self._publish_commit,
+            emit_state=self._publish_state_msg,
+            range_m=self.config.interceptors.range_m,
+            speed_mps=self.config.interceptors.speed_mps,
+            protected_point=self.config.scenario.target_position,
+            lock_threshold_s=rt.lock_threshold_s,
+            bucket_size_s=rt.bucket_size_s,
+            bucket_hysteresis_s=rt.bucket_hysteresis_s,
+            incumbency_margin=rt.incumbency_margin,
+            change_repeat=rt.change_repeat,
+            heartbeat_period_s=rt.heartbeat_period_s,
+            silence_timeout_s=rt.silence_timeout_s,
         )
 
         # GS topics are not lossy: assignments are latched (one-shot at launch),
@@ -116,8 +126,8 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         # serde does not recurse into a dataclass's nested dataclass fields.)
         self.comms.subscribe_list(Topics.GROUND_TRUTH, GroundTruthObject, self._on_ground_truth)
 
-        # Peer state broadcasts + claim/commit (all other interceptors).
-        # Convention: ids i1..iN. Peer channels are lossy (FR-7.2).
+        # Peer state broadcasts (all other interceptors) — the only peer channel
+        # in CBAA. Convention: ids i1..iN. Peer channels are lossy (FR-7.2).
         for peer_id in self._peer_ids():
             self.comms.subscribe(
                 Topics.interceptor_state(peer_id),
@@ -125,40 +135,29 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
                 self.picture.on_peer_state,
                 lossy=True,
             )
-            self.comms.subscribe(
-                Topics.interceptor_claim(peer_id), Claim, self.retask.on_peer_claim, lossy=True
-            )
-            self.comms.subscribe(
-                Topics.interceptor_commit(peer_id), Commit, self.retask.on_peer_commit, lossy=True
-            )
 
-        # 5 Hz state broadcast.
+        # State broadcast: the CBAA tick decides AND emits, so a single timer at
+        # the decision period (5 Hz) drives both. emit_state publishes here.
         self._state_topic = Topics.interceptor_state(self.state.id)
         self.comms.advertise(self._state_topic)
-        self.create_timer(1.0 / self.config.comms.publish_rate_hz, self._publish_state)
 
         # 10 Hz waypoint command to the simulation.
         self._waypoint_topic = Topics.waypoint_command(self.state.id)
         self.comms.advertise(self._waypoint_topic)
         self.create_timer(1.0 / self.config.guidance.update_rate_hz, self._publish_waypoint)
 
-        # Peer-to-peer claim/commit broadcast (A5). Same lossy peer channels.
-        self._claim_topic = Topics.interceptor_claim(self.state.id)
-        self._commit_topic = Topics.interceptor_commit(self.state.id)
-        self.comms.advertise(self._claim_topic)
-        self.comms.advertise(self._commit_topic)
-
         # 2 Hz awareness check (A4 conflict log).
         self._conflict_logged = False
+        self._last_logged_owns: str | None = None
         self.create_timer(0.5, self._check_awareness)
 
-        # Drive the claim-and-confirm FSM (A5). The consensus window is a
-        # deadline re-read here, never a blocking sleep (single-threaded executor).
-        self.create_timer(1.0 / RETASK_TICK_HZ, self._retask_tick)
+        # Drive the CBAA engine (A5) at the decision period. Each tick rebuilds
+        # the decision from the latest picture and broadcasts our state.
+        self.create_timer(self.config.retasking.decision_period_s, self._retask_tick)
 
         self.get_logger().info(
             f"{self.state.id} up: launch={self.state.position}, "
-            f"state @ {self.config.comms.publish_rate_hz} Hz, "
+            f"CBAA @ {1.0 / self.config.retasking.decision_period_s:.0f} Hz, "
             f"waypoints @ {self.config.guidance.update_rate_hz} Hz"
         )
 
@@ -197,10 +196,16 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         self.state.velocity = me.velocity
         self.state.alive = me.alive
 
-    def _publish_state(self) -> None:
-        # Refresh our own entry in the picture, then broadcast.
-        self.picture.update_self(self.state.assigned_track_id, self.state.alive, self._elapsed())
-        self.comms.publish(self._state_topic, self.state.to_state_msg(self._elapsed()))
+    def _publish_state_msg(self, msg: InterceptorState) -> None:
+        # CBAA emit_state seam: the engine built the message (ownership, key,
+        # lock, seq); we just put it on the wire and log ownership changes.
+        if msg.assigned_track_id != self._last_logged_owns:
+            self.get_logger().info(
+                f"{self.state.id} owns -> {msg.assigned_track_id}"
+                f"{' [LOCKED]' if msg.locked else ''}"
+            )
+            self._last_logged_owns = msg.assigned_track_id
+        self.comms.publish(self._state_topic, msg)
 
     def _check_awareness(self) -> None:
         conflict = self.picture.has_coverage_conflict()
@@ -213,14 +218,6 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
 
     def _retask_tick(self) -> None:
         self.retask.tick(self._elapsed())
-
-    def _publish_claim(self, claim: Claim) -> None:
-        self.comms.publish(self._claim_topic, claim)
-        self.get_logger().info(f"{self.state.id} CLAIM -> {claim.target_track_id}")
-
-    def _publish_commit(self, commit: Commit) -> None:
-        self.comms.publish(self._commit_topic, commit)
-        self.get_logger().info(f"{self.state.id} COMMIT -> {commit.target_track_id}")
 
     def _publish_waypoint(self) -> None:
         target = self.state.target()

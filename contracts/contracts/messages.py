@@ -99,43 +99,31 @@ class Assignment:
 @dataclass
 class InterceptorState:
     """
-    Broadcast by each interceptor at 5 Hz.
-    Peers use this to maintain their local awareness picture.
+    Broadcast by each interceptor at 5 Hz — the SINGLE peer-to-peer message of
+    the CBAA re-tasking protocol (the old Claim/Commit pair is gone). Peers use
+    it both to maintain their local awareness picture AND to arbitrate ownership.
+
+    Decentralised re-tasking is consensus-by-broadcast: every interceptor
+    publishes which track it `owns`, the self-computed `owns_priority` key that
+    justifies that ownership, and whether it has `locked` on for terminal
+    guidance. Peers never recompute a peer's key — they compare the transmitted
+    `owns_priority` directly, so all agents arbitrate on identical numbers.
     """
 
     interceptor_id: str
     position: tuple[float, float, float]
     velocity: tuple[float, float, float]
-    assigned_track_id: str | None  # None if free
+    assigned_track_id: str | None  # the owned track (spec: `owns`); None if free
     alive: bool
     timestamp: float
-
-
-@dataclass
-class Claim:
-    """
-    Broadcast during claim-and-confirm re-tasking.
-    An interceptor claims it intends to pursue target_track_id.
-    Conflicts on the same target are resolved by highest `score`;
-    interceptor_id breaks ties (deterministic, so every peer agrees).
-    """
-
-    interceptor_id: str
-    target_track_id: str
-    score: float  # engagement value of this claim (higher wins)
-    timestamp: float
-
-
-@dataclass
-class Commit:
-    """
-    Broadcast after a claim is confirmed (no higher-ID competing claim received).
-    All peers must update their local picture when they receive this.
-    """
-
-    interceptor_id: str
-    target_track_id: str
-    timestamp: float
+    # --- CBAA fields (default so pre-CBAA constructors keep working) ----------
+    # Lexicographic priority key for `assigned_track_id`, computed by THIS owner
+    # and never recomputed by peers: (affinity_bucket, danger, id_rank), larger
+    # wins. None iff assigned_track_id is None. Travels as a JSON list on the
+    # wire; awareness normalises it back to a tuple on receive.
+    owns_priority: tuple[float, float, float] | None = None
+    locked: bool = False  # monotone: terminal lock, never released once True
+    seq: int = 0  # per-sender monotone counter (anti-replay / staleness guard)
 
 
 # ---------------------------------------------------------------------------

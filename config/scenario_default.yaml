@@ -38,3 +38,13 @@ guidance:
   update_rate_hz: 10
   nav_constant: 4.0
   lookahead_s: 1.0
+
+retasking:
+  decision_period_s: 0.2
+  lock_threshold_s: 5.0
+  bucket_size_s: 2.0
+  bucket_hysteresis_s: 0.2
+  incumbency_margin: 0.001
+  change_repeat: 3
+  heartbeat_period_s: 0.2
+  silence_timeout_s: 0.6

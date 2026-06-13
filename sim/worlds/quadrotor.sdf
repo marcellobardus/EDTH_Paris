@@ -19,12 +19,6 @@
       <render_engine>ogre2</render_engine>
     </plugin>
 
-    <!-- gzweb streaming: exposes scene state over websocket on port 9002 -->
-    <plugin filename="gz-sim-websocket-server-system"
-            name="gz::sim::systems::WebsocketServer">
-      <port>9002</port>
-    </plugin>
-
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
       <pose>0 0 10 0 0 0</pose>

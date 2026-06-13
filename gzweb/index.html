@@ -13,11 +13,36 @@
       color: #ccc; font-family: monospace; font-size: 12px;
       background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
     }
+    #nav-panel {
+      position: absolute; top: 10px; right: 10px;
+      display: flex; flex-direction: column; gap: 4px;
+      font-family: monospace; font-size: 12px;
+    }
+    #nav-panel button {
+      background: rgba(0,0,0,0.6); color: #ddd; border: 1px solid #444;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer; text-align: left;
+    }
+    #nav-panel button:hover { background: rgba(60,80,120,0.8); color: #fff; }
+    #nav-panel .sep {
+      color: #555; font-size: 10px; padding: 2px 4px;
+    }
   </style>
 </head>
 <body>
   <div id="gz-scene"></div>
   <div id="status">Connecting…</div>
+  <div id="nav-panel">
+    <button data-model="overview">Overview</button>
+    <div class="sep">— Interceptors —</div>
+    <button data-model="interceptor_1">Interceptor 1</button>
+    <button data-model="interceptor_2">Interceptor 2</button>
+    <button data-model="interceptor_3">Interceptor 3</button>
+    <div class="sep">— Threats —</div>
+    <button data-model="shahed_1">Shahed 1</button>
+    <button data-model="shahed_2">Shahed 2</button>
+    <button data-model="shahed_3">Shahed 3</button>
+    <button data-model="shahed_4">Shahed 4</button>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

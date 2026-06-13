@@ -55,7 +55,7 @@ docker compose up sim gs agent viz
 
 ### Communication
 
-All inter-process communication is ROS2 pub/sub with `network_mode: host` in Docker (required for DDS). Topic names must always be imported from `contracts/contracts/topics.py` — never hardcoded.
+All inter-process communication is ROS2 pub/sub with **both `network_mode: host` and `ipc: host`** in Docker (see Gotchas — without `ipc: host` Fast DDS silently drops every cross-container sample). Topic names must always be imported from `contracts/contracts/topics.py` — never hardcoded.
 
 **Pre-launch flow** (GS active):
 ```
@@ -105,3 +105,20 @@ Each team can develop against mocks without waiting for other teams:
 ### Docker
 
 `docker/base.Dockerfile` provides the shared base: ROS2 Jazzy + Gazebo Harmonic + `uv`. Each module's `Dockerfile` builds on top of it. The `base` service must be built first (`depends_on: [base]` in compose).
+
+### Sim ↔ Gazebo wiring (`sim/`)
+
+Two processes back the simulation:
+- **`sim.world`** launches Gazebo headless (`gz sim -s -r`) on the `intercept_scenario.sdf` world plus the `gz-launch` websocket server on `:9002` (consumed by gzweb at `:8080`). It only *visualizes* — it closes no control loop.
+- **`sim.driver`** is the authority that closes the loop. It owns the Shahed kinematics in pure Python, and flies the interceptors through **real Gazebo physics**: a `GzBridge` (using `gz.transport13` + `gz.msgs10`) publishes `enable` + body-frame `cmd_vel` toward each agent waypoint and reads true interceptor poses back from `/world/intercept_scenario/pose/info`. Shaheds are `<static>` SDF models (no controller) and are teleported each tick via the `set_pose_vector` service. The driver also emits `/simulation/ground_truth`, `/radar/detections`, `/simulation/engagement`, and (until the real GS lands) perfect-sensor `/gs/tracks` + a one-shot `/gs/assignments` (`--no-gs` disables the GS stand-in).
+
+ID bridge: agent id `i{n}` ↔ gz model `interceptor_{n}`; track id `t{n}` ↔ gz model `shahed_{n}`.
+
+## Gotchas (hard-won — read before debugging "nothing moves")
+
+- **DDS needs `ipc: host`, not just `network_mode: host`.** Fast DDS (the Jazzy default RMW) discovers peers over UDP — so `ros2 topic info` shows publishers/subscribers matched — then picks the shared-memory transport for same-host peers and **silently drops every sample** across containers, because each container has its own `/dev/shm`. Symptom: agents never receive `/gs/assignments`/`/gs/tracks`/ground-truth and sit frozen at launch. Fix: `ipc: host` on every DDS service (it's a create-time option — `docker compose up -d` to apply, a plain `restart` won't). `gzweb` is exempt (it uses the websocket, not DDS).
+- **Read interceptor poses from `/world/intercept_scenario/pose/info`, NEVER `/model/interceptor_N/odometry`.** The odometry topic does not report true world position — it reads as frozen at the spawn point even while the model flies. This one wrong topic can make working flight look completely broken.
+- **The multicopter controller can't dash at the config's nominal speeds.** A 3 kg quad under `MulticopterVelocityControl` flies stably only to ~11–13 m/s; commanding more (or stepping velocity instantly) tips it over. The scenario is tuned to this envelope (shaheds 5–8 m/s, interceptors 13 m/s). `cmd_vel` linear velocity is **body-frame** — the driver rotates the desired world velocity by −yaw.
+- **SDF param names are unforgiving.** It is `maxLinearAcceleration` (NOT `maximumLinearAcceleration`, which gz silently ignores → unlimited accel → flips) and `maximumLinearVelocity` for the speed cap. Both live in `intercept_scenario.sdf`.
+- **gz service requests are blocking and run on the rclpy executor thread.** Issuing several per tick starves the physics step (Shaheds barely move). Batch them: one `set_pose_vector` (`gz.msgs.Pose_V`) call for all Shaheds, on its own lower-rate timer.
+- **`cmd_vel` actuates only when enabled AND a twist has been received** (`controllerActive && cmdVelMsg.has_value()`). The driver re-publishes `enable=true` every tick so a late-discovering controller still latches.

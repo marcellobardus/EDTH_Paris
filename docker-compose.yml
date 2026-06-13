@@ -12,6 +12,7 @@ services:
     image: edth-sim:latest
     depends_on: [base]
     network_mode: host          # ROS2 DDS needs host networking for cross-service topics
+    ipc: host                   # share /dev/shm so Fast DDS shared-memory transport works across containers
     ports:
       - "9002:9002"             # gz-sim websocket server (consumed by gzweb in the browser)
     volumes:
@@ -26,6 +27,7 @@ services:
     image: edth-sim:latest        # reuses the sim image (built by the `sim` service)
     depends_on: [sim]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     command: ["python3", "-m", "sim.driver"]
     volumes:
       - ./config:/app/config:ro
@@ -49,6 +51,7 @@ services:
     image: edth-gs:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     volumes:
       - ./config:/app/config:ro
 
@@ -61,6 +64,7 @@ services:
     image: edth-agent:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i1
     volumes:
@@ -70,6 +74,7 @@ services:
     image: edth-agent:latest
     depends_on: [agent1]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i2
     volumes:
@@ -79,6 +84,7 @@ services:
     image: edth-agent:latest
     depends_on: [agent1]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
     environment:
       - INTERCEPTOR_ID=i3
     volumes:
@@ -91,6 +97,24 @@ services:
     image: edth-viz:latest
     depends_on: [base]
     network_mode: host
+    ipc: host                   # share /dev/shm with peers for Fast DDS SHM transport
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+
+  # ROS2 -> HTTP bridge feeding the web dashboard (viz/dashboard/src/real_api.ts).
+  # Subscribes to the live bus and serves /api/* on :8000. The sim nodes already
+  # run as their own compose services, so the Run/Reset buttons must NOT spawn
+  # duplicates: VIZ_SPAWN_SIM=0. The Vite dev server proxies /api here.
+  viz-api:
+    image: edth-viz:latest        # reuses the viz image (built by the `viz` service)
+    depends_on: [viz]
+    network_mode: host
+    command: ["python3", "-m", "viz.bridge"]
+    environment:
+      - VIZ_SPAWN_SIM=0
+    ports:
+      - "8000:8000"
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs

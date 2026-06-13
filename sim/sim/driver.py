@@ -51,7 +51,9 @@ from contracts.messages import (
 from contracts.topics import Topics
 
 # Engagement geometry (no config field exists for these; sensible defaults).
-KILL_RADIUS_M = 15.0  # interceptor within this of a Shahed => kill
+KILL_RADIUS_M = 25.0  # interceptor within this of a Shahed => kill (widened for
+#                       physics tracking lag: the gz-flown interceptor trails the
+#                       PN carrot, unlike the old perfect-tracking kinematic model)
 TARGET_REACH_RADIUS_M = 10.0  # Shahed within this of target => leak (matches mock_radar)
 
 # Loop rates.
@@ -146,31 +148,46 @@ class Shahed:
 
 
 class Interceptor:
-    """A pursuer that chases the latest waypoint at fixed speed, rate-limited."""
+    """A pursuer flown by Gazebo physics via cmd_vel.
+
+    The driver no longer integrates its motion — `pos`/`vel` are refreshed each
+    tick from the gz world pose (see GzBridge), and a velocity command toward the
+    latest waypoint is published back to the multicopter velocity controller. The
+    Python `step()` is gone: gz is the kinematic authority for interceptors.
+    """
 
     def __init__(self, iid: str, pos: Vec3, speed: float, max_turn_rate_deg_s: float) -> None:
         self.id = iid
         self.pos = pos
         self.vel: Vec3 = (0.0, 0.0, 0.0)
+        self.yaw = 0.0  # world heading, radians (from gz orientation)
         self.alive = True
         self.waypoint: Vec3 | None = None
         self._speed = speed
-        self._max_turn = math.radians(max_turn_rate_deg_s)
 
-    def step(self, dt: float) -> None:
-        if not self.alive or self.waypoint is None:
-            return
+    def desired_world_velocity(self) -> Vec3:
+        """Velocity vector to fly toward the current waypoint, capped at cruise speed."""
+        if self.waypoint is None:
+            return (0.0, 0.0, 0.0)
         to_wp = _sub(self.waypoint, self.pos)
-        if _norm(to_wp) < _EPS:
-            return
-        desired = _unit(to_wp)
-        speed = _norm(self.vel)
-        if speed < _EPS:
-            new_dir = desired  # just launched: head straight at the carrot
-        else:
-            new_dir = _rotate_toward(_unit(self.vel), desired, self._max_turn * dt)
-        self.vel = _scale(new_dir, self._speed)
-        self.pos = _add(self.pos, _scale(self.vel, dt))
+        d = _norm(to_wp)
+        if d < _EPS:
+            return (0.0, 0.0, 0.0)
+        # Ease off in the last few metres so we don't overshoot the carrot.
+        speed = self._speed if d > self._speed else d
+        return _scale(_unit(to_wp), speed)
+
+    def body_velocity_command(self) -> Vec3:
+        """desired_world_velocity rotated into the body frame (cmd_vel is body-frame).
+
+        Vertical is shared between frames for near-level flight; only the
+        horizontal vector is rotated by -yaw.
+        """
+        wx, wy, wz = self.desired_world_velocity()
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        bx = c * wx + s * wy
+        by = -s * wx + c * wy
+        return (bx, by, wz)
 
 
 @dataclass
@@ -223,9 +240,9 @@ class SimWorld:
                 return
 
     def step(self, dt: float) -> StepResult:
+        # Interceptors are flown by gz physics; their pos/vel are refreshed from
+        # the world pose before this call, so we only integrate the shaheds here.
         self.t += dt
-        for itc in self.interceptors:
-            itc.step(dt)
 
         leaked: list[str] = []
         for sh in self.shaheds:
@@ -325,6 +342,122 @@ def _encode_list(objs: Sequence[Any]) -> str:
     return json.dumps([dataclasses.asdict(o) for o in objs])
 
 
+# ── Gazebo bridge ───────────────────────────────────────────────────────────────
+#
+# Closes the physics half of the loop the agents can't see:
+#   - interceptors are flown by gz's MulticopterVelocityControl: we publish
+#     enable=true + a body-frame cmd_vel toward each waypoint, and read their
+#     true world pose back from /world/<world>/pose/info (NOT /model/.../odometry,
+#     which does not report world z — that mistake cost us hours).
+#   - shaheds are <static> SDF models with no controller, so we teleport them to
+#     the Python-kinematic pose each tick via the set_pose service.
+#
+# ID convention bridged here: agent id i{n} <-> gz model interceptor_{n};
+# track id t{n} <-> gz model shahed_{n}.
+
+GZ_WORLD = "intercept_scenario"
+# Just enough climb-out to clear the ground before chasing; above this the
+# interceptor homes fully in 3D on the waypoint (which sits at the target's
+# altitude), so it can actually close the vertical gap to a shahed.
+CRUISE_ALTITUDE_M = 20.0
+
+
+def _yaw_from_quat(w: float, x: float, y: float, z: float) -> float:
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+class GzBridge:
+    """Thin gz-transport seam: fly interceptors via cmd_vel, teleport shaheds."""
+
+    def __init__(self, world: SimWorld) -> None:
+        from gz.msgs10.boolean_pb2 import Boolean
+        from gz.msgs10.pose_pb2 import Pose
+        from gz.msgs10.pose_v_pb2 import Pose_V
+        from gz.msgs10.twist_pb2 import Twist
+        from gz.transport13 import Node
+
+        self._Boolean = Boolean
+        self._Pose = Pose
+        self._Pose_V = Pose_V
+        self._Twist = Twist
+        self._world = world
+        self._node = Node()
+
+        # i{n} -> interceptor_{n} (and reverse, by gz model name).
+        self._gz_name = {f"i{n}": f"interceptor_{n}" for n in range(1, len(world.interceptors) + 1)}
+        self._id_by_gz = {v: k for k, v in self._gz_name.items()}
+        # t{n} -> shahed_{n}.
+        self._shahed_gz = {f"t{n}": f"shahed_{n}" for n in range(1, len(world.shaheds) + 1)}
+
+        self._enable_pub = {}
+        self._cmd_pub = {}
+        for itc in world.interceptors:
+            ns = self._gz_name[itc.id]
+            self._enable_pub[itc.id] = self._node.advertise(f"/{ns}/enable", Boolean)
+            self._cmd_pub[itc.id] = self._node.advertise(f"/{ns}/cmd_vel", Twist)
+
+        # World pose feed — refreshes interceptor truth in place.
+        self._node.subscribe(Pose_V, f"/world/{GZ_WORLD}/pose/info", self._on_pose_v)
+        # Batch all shahed teleports into ONE service call: the gz request is
+        # blocking and runs on the rclpy executor thread, so 4 calls/tick starved
+        # the physics step. One Pose_V call keeps the tick cheap.
+        self._set_pose_vec_srv = f"/world/{GZ_WORLD}/set_pose_vector"
+
+    # -- interceptor truth in <- gz ----------------------------------------
+    def _on_pose_v(self, msg: Any) -> None:
+        by_id = {itc.id: itc for itc in self._world.interceptors}
+        for p in msg.pose:
+            iid = self._id_by_gz.get(p.name)
+            if iid is None:
+                continue
+            itc = by_id.get(iid)
+            if itc is None:
+                continue
+            pos = p.position
+            itc.pos = (pos.x, pos.y, pos.z)
+            o = p.orientation
+            itc.yaw = _yaw_from_quat(o.w, o.x, o.y, o.z)
+
+    # -- interceptor control out -> gz -------------------------------------
+    def arm_all(self) -> None:
+        b = self._Boolean()
+        b.data = True
+        for pub in self._enable_pub.values():
+            pub.publish(b)
+
+    def publish_cmd_vel(self) -> None:
+        for itc in self._world.interceptors:
+            if not itc.alive:
+                continue
+            # Hold cruise altitude if we're still below it and have somewhere to go.
+            bx, by, bz = itc.body_velocity_command()
+            if itc.waypoint is not None and itc.pos[2] < CRUISE_ALTITUDE_M - 5.0:
+                bz = max(bz, 6.0)  # prioritise climbing out before chasing
+            t = self._Twist()
+            t.linear.x, t.linear.y, t.linear.z = bx, by, bz
+            self._cmd_pub[itc.id].publish(t)
+
+    # -- shahed teleport out -> gz -----------------------------------------
+    def teleport_shaheds(self) -> None:
+        req = self._Pose_V()
+        any_alive = False
+        for sh in self._world.shaheds:
+            gz_name = self._shahed_gz.get(sh.id)
+            if gz_name is None or not sh.alive:
+                continue
+            any_alive = True
+            p = req.pose.add()
+            p.name = gz_name
+            p.position.x, p.position.y, p.position.z = sh.pos
+            p.orientation.w = 1.0
+        if not any_alive:
+            return
+        try:
+            self._node.request(self._set_pose_vec_srv, req, self._Pose_V, self._Boolean, 50)
+        except Exception:
+            pass
+
+
 # ── ROS2 node ──────────────────────────────────────────────────────────────────
 
 
@@ -354,6 +487,7 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
             super().__init__("sim_driver")
             self.world = SimWorld(cfg, seed, kill_radius)
             self._emit_gs = emit_gs
+            self._gz = GzBridge(self.world)
 
             # agent --waypoint--> driver
             for itc in self.world.interceptors:
@@ -371,6 +505,12 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
             self.create_timer(1.0 / PHYS_HZ, self._step)
             self.create_timer(1.0 / GROUND_TRUTH_HZ, self._pub_ground_truth)
             self.create_timer(1.0 / RADAR_HZ, self._pub_radar)
+            # gz interceptor control at the ground-truth rate; keep arming so a
+            # late-discovering velocity controller still latches enable=true.
+            self.create_timer(1.0 / GROUND_TRUTH_HZ, self._drive_gz)
+            # Shahed teleport on its own slower timer: the call is blocking, so we
+            # keep it off the hot control path.
+            self.create_timer(0.1, self._gz.teleport_shaheds)
             self._assign_timer: Any = None
             if emit_gs:
                 self.create_timer(1.0 / TRACK_HZ, self._pub_tracks)
@@ -399,6 +539,13 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
                 )
             for sid in result.leaked:
                 self.get_logger().info(f"LEAK {sid} reached target @ t={self.world.t:.1f}s")
+
+        def _drive_gz(self) -> None:
+            # Interceptor poses are refreshed in place by the pose/info callback;
+            # here we push control out: keep them armed and command velocity
+            # toward the waypoint. (Shahed teleport is on its own timer.)
+            self._gz.arm_all()
+            self._gz.publish_cmd_vel()
 
         def _pub_ground_truth(self) -> None:
             self._gt_pub.publish(String(data=_encode_list(self.world.ground_truth())))

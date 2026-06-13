@@ -1,7 +1,7 @@
 scenario:
   seed: 42
   target_position: [500, 500, 0]
-  duration_max: 120
+  duration_max: 240
   situation: B
 
 radars:
@@ -16,13 +16,13 @@ radars:
 
 shaheds:
   count: 4
-  speed_mps: [15, 25]
-  spawn_radius: 1000
+  speed_mps: [5, 8]
+  spawn_radius: 700
   spawn_angle_spread_deg: 360
 
 interceptors:
   count: 3
-  speed_mps: 40
+  speed_mps: 13
   max_turn_rate_deg_s: 30
   range_m: 700
   launch_position: [480, 480, 0]

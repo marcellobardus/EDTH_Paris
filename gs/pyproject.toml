@@ -11,6 +11,7 @@ dependencies = [
     "contracts",
     "numpy>=1.26",
     "scipy>=1.13",
+    "stonesoup>=1.2",
 ]
 
 [tool.uv.sources]

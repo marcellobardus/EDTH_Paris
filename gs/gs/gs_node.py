@@ -2,16 +2,18 @@
 Continuously-running ground-station node.
 
 Listens for radar detections, fuses them into tracks with the multi-target
-Kalman tracker, and republishes the fused ``Track`` estimates — so downstream
-(threat scoring, assignment) works against clean tracks rather than raw noisy
-detections. Prints a per-tick track summary so you can watch tracks form and
-persist. Runs until Ctrl-C.
+Kalman tracker, scores each track against the defended asset, and republishes
+both the fused ``Track`` estimates (``/gs/tracks``) and their
+``ThreatAssessment`` scores (``/gs/threats``) — so downstream (assignment) works
+against clean, scored tracks rather than raw noisy detections. Prints a per-tick
+threat summary so you can watch tracks form, persist, and rank. Runs until Ctrl-C.
 
-Detections-in and tracks-out are two separate pub/sub channels on two ZeroMQ
-endpoints (a single ``ZmqBus`` binds both its SUB and PUB sockets to one address,
-which would collide). The node binds SUB on ``--addr`` (detections) and PUB on
-``--tracks-addr`` (tracks); a downstream consumer connects its SUB to
-``--tracks-addr``.
+Detections-in and the outbound stream are separate pub/sub channels on two
+ZeroMQ endpoints (a single ``ZmqBus`` binds both its SUB and PUB sockets to one
+address, which would collide). The node binds SUB on ``--addr`` (detections) and
+PUB on ``--tracks-addr``; both ``/gs/tracks`` and ``/gs/threats`` ride that one
+PUB socket (subscribers filter by topic), so a downstream consumer connects its
+SUB to ``--tracks-addr``.
 
 Run the listener first, then the radar in another terminal:
 
@@ -33,6 +35,7 @@ from contracts.bus import Bus
 from contracts.messages import Track
 from contracts.topics import Topics
 
+from gs.threat_assessor import ETA_SENTINEL, ThreatAssessor
 from gs.track_publisher import TrackPublisher
 
 T = TypeVar("T")
@@ -60,6 +63,15 @@ def main() -> None:
     parser.add_argument("--addr", default="tcp://127.0.0.1:5556", help="detections SUB address")
     parser.add_argument("--tracks-addr", default="tcp://127.0.0.1:5557", help="tracks PUB address")
     parser.add_argument("--rate", type=float, default=10.0, help="tracker tick rate (Hz)")
+    parser.add_argument(
+        "--target",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=[0.0, 0.0, 0.0],
+        help="defended-asset position for threat scoring (default: origin, where the "
+        "mock world flies the drones; scenario config's target_position may differ)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -71,16 +83,23 @@ def main() -> None:
     detections_in = ZmqBus(args.addr, bind=True)  # the ground station is the stable endpoint
     tracks_out = ZmqBus(args.tracks_addr, bind=True)
     tick_interval = 1.0 / args.rate
+    assessor = ThreatAssessor(tuple(args.target))
 
     def on_tracks(tracks: list[Track], scenario_t: float) -> None:
+        # Score every fused track and publish it as a threat. /gs/threats rides
+        # the same outbound PUB socket as /gs/tracks (a PUB carries many topics).
+        threats = [assessor.assess(track) for track in tracks]
+        for threat in threats:
+            tracks_out.publish(Topics.GS_THREATS, threat)
         summary = (
             ", ".join(
-                f"{t.track_id[:8]}@({t.position[0]:.0f},{t.position[1]:.0f},{t.position[2]:.0f})"
-                for t in tracks
+                f"{th.track_id[:8]} score={th.threat_score:.3f} "
+                f"eta={'∞' if th.eta_seconds >= ETA_SENTINEL else f'{th.eta_seconds:.0f}s'}"
+                for th in sorted(threats, key=lambda th: th.threat_score, reverse=True)
             )
             or "(none confirmed yet)"
         )
-        log.info("scan t=%6.1fs  tracks[%d]: %s", scenario_t, len(tracks), summary)
+        log.info("scan t=%6.1fs  threats[%d]: %s", scenario_t, len(threats), summary)
 
     publisher = TrackPublisher(
         _SplitBus(detections_in, tracks_out),
@@ -89,11 +108,13 @@ def main() -> None:
     )
 
     log.info(
-        "tracking %s (%s) -> %s (%s) at %g Hz. Ctrl-C to stop.",
+        "tracking %s (%s) -> %s + %s (%s), asset@%s, %g Hz. Ctrl-C to stop.",
         Topics.RADAR_DETECTIONS,
         args.addr,
         Topics.GS_TRACKS,
+        Topics.GS_THREATS,
         args.tracks_addr,
+        tuple(args.target),
         args.rate,
     )
     next_tick = time.monotonic()

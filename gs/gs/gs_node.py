@@ -1,9 +1,11 @@
 """
 Continuously-running ground-station node.
 
-Binds a ZeroMQ listener on ``Topics.RADAR_DETECTIONS``, prints every detection
-it receives, and runs the launch decider — so you see, live, each radar hit and
-the launch/hold decision per new threat. Runs until Ctrl-C.
+Binds a ZeroMQ listener on ``Topics.RADAR_DETECTIONS``, fuses the incoming hits
+into tracks with the multi-target Kalman tracker, and republishes the fused
+``Track`` estimates on ``Topics.GS_TRACKS`` — so downstream (threat scoring,
+assignment) works against clean tracks rather than raw noisy detections. Prints
+a per-tick summary so you can watch tracks form and persist. Runs until Ctrl-C.
 
 Run the listener first, then the radar in another terminal:
 
@@ -14,39 +16,51 @@ Run the listener first, then the radar in another terminal:
 from __future__ import annotations
 
 import argparse
-import math
+import time
+from datetime import datetime
 
 from agent.bus import ZmqBus
-from contracts.messages import RadarDetection
+from contracts.messages import Track
 from contracts.topics import Topics
 
-from gs.launch_decider import LaunchDecider, LaunchDecision
+from gs.track_publisher import TrackPublisher
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Continuous ground-station listener")
+    parser = argparse.ArgumentParser(description="Continuous ground-station tracker")
     parser.add_argument("--addr", default="tcp://127.0.0.1:5556", help="ZeroMQ address")
-    parser.add_argument("--pool", type=int, default=3, help="interceptors available")
+    parser.add_argument("--rate", type=float, default=10.0, help="tracker tick rate (Hz)")
     args = parser.parse_args()
 
-    bus = ZmqBus(args.addr, bind=True)        # the ground station is the stable endpoint
+    bus = ZmqBus(args.addr, bind=True)  # the ground station is the stable endpoint
+    tick_interval = 1.0 / args.rate
 
-    def on_detection(det: RadarDetection) -> None:
-        x, y, z = det.position
-        rng_m = math.sqrt(x * x + y * y + z * z)
-        print(f"  RX detection  t={det.timestamp:7.1f}s  range={rng_m:6.0f} m")
+    def on_tracks(tracks: list[Track]) -> None:
+        summary = ", ".join(
+            f"{t.track_id[:8]}@({t.position[0]:.0f},{t.position[1]:.0f},{t.position[2]:.0f})"
+            for t in tracks
+        )
+        print(f"  tracks[{len(tracks)}]: {summary}")
 
-    def on_decision(decision: LaunchDecision) -> None:
-        verb = f"LAUNCH {decision.interceptor_id}" if decision.launched else "HOLD"
-        print(f"  >> {decision.threat_id}: {verb}  ({decision.reason})")
+    publisher = TrackPublisher(
+        bus,
+        start_time=datetime.now(),
+        tick_interval_s=tick_interval,
+        on_tracks=on_tracks,
+    )
 
-    bus.subscribe(Topics.RADAR_DETECTIONS, RadarDetection, on_detection)
-    LaunchDecider(bus, interceptor_pool=args.pool, on_decision=on_decision)
-
-    print(f"Ground station listening on {Topics.RADAR_DETECTIONS} ({args.addr}). Ctrl-C to stop.\n")
+    print(
+        f"Ground station tracking {Topics.RADAR_DETECTIONS} -> {Topics.GS_TRACKS} "
+        f"({args.addr}, {args.rate:g} Hz). Ctrl-C to stop.\n"
+    )
+    next_tick = time.monotonic()
     try:
         while True:
-            bus.spin(timeout_ms=200)
+            bus.spin(timeout_ms=int(tick_interval * 1000))
+            now = time.monotonic()
+            if now >= next_tick:
+                publisher.tick()
+                next_tick = now + tick_interval
     except KeyboardInterrupt:
         print("\nGround station stopped.")
 

@@ -44,6 +44,11 @@ properties to respect:
 2. **`1e9` is a feasibility sentinel, not a real cost.** After solving, any chosen
    pair whose cost ≥ the sentinel is *not* an assignment — that interceptor
    **holds** (FR-5.4). Strip these out; never emit them.
+3. **Kinetic power is homogeneous** (stated assumption): every interceptor is
+   equally lethal, so kill-probability / warhead does **not** enter the cost. The
+   only things that differentiate interceptors are **position, speed, and range** —
+   i.e. *who can reach which threat fastest, within range*. No `lethality`/`Pk`
+   field is needed.
 
 ## The one genuinely smart modelling choice: intercept time
 
@@ -89,12 +94,54 @@ The optimizer is a **pure, stateless function** of a threat list + an intercepto
 list — no bus, no clock — so it is deterministic and trivially unit-testable. The
 publisher holds the streaming/snapshot concerns.
 
-### Interceptors, pre-launch
+### Required input data — the interceptor inventory
 
-Pre-launch every interceptor sits at the pad, so the pool comes from
-`ScenarioConfig.interceptors` (`count`, `speed_mps`, `range_m`, `launch_position`)
-— ids `i1..iN`, all sharing `launch_position`/`speed`/`range`. (Post-launch
-per-interceptor state would come from `/interceptors/{id}/state`, but that is
+The optimizer cannot decide anything without knowing the **pool it is assigning**.
+It needs, per interceptor:
+
+| Field | Why it matters | Source today | Gap |
+|---|---|---|---|
+| **id** (`i1..iN`) | label the `Assignment` | derived from `count` | — |
+| **how many available** | matrix rows; FR-5.4 hold logic | `interceptors.count` | should be *ready* count (alive, unexpended), not just nominal |
+| **where located** | drives `intercept_time` per threat — **the** discriminator | `interceptors.launch_position` (one shared point) | **single shared position ⇒ degenerate matrix** (see below) |
+| **how fast** | intercept-time quadratic; range reachability | `interceptors.speed_mps` (scalar) | shared scalar — fine if uniform, but allow per-unit |
+| **range** | feasibility gate `s·t ≤ range` | `interceptors.range_m` (scalar) | shared scalar |
+| ~~kinetic power~~ | — | — | **assumed equal → excluded by design** |
+
+**Why distinct positions are essential (not cosmetic).** If all interceptors share
+one `launch_position` *and* one `speed`/`range`, every row of the cost matrix is
+identical. The Hungarian solve then has no preference over *which* interceptor
+takes a threat — the assignment degenerates to "pick the N best threats," and the
+optimizer adds nothing over trivial threat-sorting. The optimizer only does real
+work when interceptors are **spatially separated** (different sites / a defended
+perimeter), so that different units are best-placed for different threats. So
+"where they're located" is the single most important input to get right.
+
+**The data gap.** `ScenarioConfig.interceptors` is today a *single*
+`InterceptorConfig` — one `launch_position`, scalar `speed_mps`/`range_m`,
+shared by all `count` units. That models a co-located, homogeneous battery, which
+is exactly the degenerate case. To make the optimizer meaningful we need
+**per-interceptor positions**. Options (a config/contract change — see Open
+questions, and note `contracts/` changes need team consensus per CLAUDE.md):
+
+- **(A)** add `launch_positions: list[Vec3]` (explicit per-unit sites) —
+  most faithful; recommended.
+- **(B)** keep `count` + `launch_position` and *derive* N distinct positions from
+  a layout param (e.g. evenly spaced on a defensive ring of radius `r`) — no
+  per-unit data entry, still non-degenerate.
+- **(C)** keep the single shared point for an MVP that *runs* but is degenerate —
+  acceptable only as a stub.
+
+**Decoupling.** Whichever we pick, the **pure optimizer is insulated**: it takes a
+`list[Interceptor]` (id, position, speed, range). A small `build_interceptors(cfg,
+available_ids=None)` adapter resolves that list from config (and later from
+`/interceptors/{id}/state` for live positions / availability). So the contract
+decision can be deferred without blocking Phase 1.
+
+**Availability.** "Available" = ready units only (alive, not already committed/
+expended). Pre-launch that is all `count`; the adapter filters via
+`available_ids`, so an interceptor that's down simply isn't a matrix row.
+(Post-launch live positions/availability come from `/interceptors/{id}/state` —
 Team 3's re-tasking world, out of scope for the pre-launch burst.)
 
 ### Threat snapshot (the streaming subtlety)
@@ -164,9 +211,11 @@ INFEASIBLE = 1e9
 
 @dataclass(frozen=True)
 class Interceptor:
-    """Pre-launch interceptor: id + pad position + kinematics (from config)."""
+    """One available interceptor. Kinetic power is assumed equal across the
+    fleet, so the differentiators are purely kinematic: where it is, how fast,
+    how far it reaches. Resolved from config by ``build_interceptors``."""
     interceptor_id: str
-    launch_position: Vec3
+    position: Vec3                          # current location; pre-launch = its site
     speed_mps: float
     range_m: float
 
@@ -182,7 +231,7 @@ def intercept(interceptor: Interceptor, threat: ThreatAssessment
               ) -> tuple[float, Vec3] | None:
     """Smallest positive intercept time + lead point, or None if uncatchable.
     Solves |Δ + v·t| = s·t for t (the lead-pursuit quadratic)."""
-    L = interceptor.launch_position
+    L = interceptor.position
     p, v, s = threat.position, threat.velocity, interceptor.speed_mps
     dx = (p[0] - L[0], p[1] - L[1], p[2] - L[2])
     a = (v[0]**2 + v[1]**2 + v[2]**2) - s * s
@@ -259,6 +308,11 @@ class AssignmentOptimizer:
    threats ⇒ all held; no interceptors ⇒ all uncovered.
 8. **beat-eta gate:** threat that would be reached *after* its `eta_seconds` ⇒
    infeasible when `require_beat_eta=True`.
+9. **Distinct positions matter:** two interceptors at *different* sites + two
+   threats ⇒ each threat goes to its nearer interceptor (not an arbitrary pick) —
+   the result a co-located fleet could not produce. And the degenerate co-located
+   case still returns a *valid* (if arbitrary-among-units) assignment without
+   error, covering the most-threatening threats under scarcity.
 
 ### Out of scope
 
@@ -279,9 +333,19 @@ re-assignment. The pre-launch burst is one optimal solve.
 3. **`require_beat_eta`** — gate intercepts that land after impact? *Default: on.*
 4. **Seal `GS_ASSIGNMENTS`?** Crosses the Team-2→Team-3 boundary. *Default:
    plaintext MVP (matches tracks/threats today); seal as a follow-up.*
-5. **Interceptor identity source** — config-derived `i1..iN` at the pad
-   (pre-launch) vs `/interceptors/{id}/state`. *Default: config; this is the
-   pre-launch optimizer.*
+5. **Interceptor identity source** — config-derived `i1..iN` (pre-launch) vs live
+   `/interceptors/{id}/state`. *Default: config via `build_interceptors`; this is
+   the pre-launch optimizer.*
+6. **Per-interceptor positions (the important one)** — extend the contract with
+   `launch_positions: list[Vec3]` (option A), derive a defensive-ring layout from
+   `count` + a radius (option B), or keep the single shared point as a degenerate
+   stub (option C)? This is a `contracts/`/config change ⇒ **needs team
+   consensus** (CLAUDE.md). *Default: B for an immediately-useful non-degenerate
+   demo (no new per-unit data), with A as the faithful follow-up. The pure
+   optimizer is unaffected either way — it consumes a resolved `list[Interceptor]`.*
+7. **Per-interceptor speed/range** — keep the shared scalars, or allow per-unit
+   values? *Default: shared scalars now (uniform fleet); `Interceptor` already
+   carries them per-unit, so heterogeneous units need no optimizer change later.*
 
 ## Appendix: where G4 sits
 

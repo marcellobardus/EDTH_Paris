@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "cbor2>=5.6",            # compact canonical wire encoding (app-layer message security)
+    "cryptography>=43.0",    # ChaCha20-Poly1305 AEAD (HMAC uses stdlib)
 ]
 
 [tool.hatch.build.targets.wheel]

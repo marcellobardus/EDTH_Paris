@@ -13,23 +13,23 @@ from pydantic import BaseModel, model_validator
 
 class RadarConfig(BaseModel):
     position: tuple[float, float, float]
-    range: float                  # metres
-    fov_deg: float                # 360 = omnidirectional
-    noise_std: float              # metres, 1-sigma
+    range: float  # metres
+    fov_deg: float  # 360 = omnidirectional
+    noise_std: float  # metres, 1-sigma
 
 
 class ShahedConfig(BaseModel):
     count: int
-    speed_mps: tuple[float, float]        # [min, max] — sampled uniformly
-    spawn_radius: float                   # metres from target
-    spawn_angle_spread_deg: float         # 360 = full circle
+    speed_mps: tuple[float, float]  # [min, max] — sampled uniformly
+    spawn_radius: float  # metres from target
+    spawn_angle_spread_deg: float  # 360 = full circle
 
 
 class InterceptorConfig(BaseModel):
     count: int
     speed_mps: float
     max_turn_rate_deg_s: float
-    range_m: float                        # max engagement range
+    range_m: float  # max engagement range
     launch_position: tuple[float, float, float]
 
 
@@ -51,7 +51,7 @@ class ScenarioMeta(BaseModel):
     """Top-level scenario metadata — the `scenario:` block in the YAML."""
     seed: int
     target_position: tuple[float, float, float]
-    duration_max: float                   # seconds
+    duration_max: float  # seconds
     situation: Literal["A", "B"]
 
 

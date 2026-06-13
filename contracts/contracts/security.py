@@ -13,8 +13,11 @@ Layers
 1. Primitives (Protocols): ``Codec`` (serialization), ``Signer`` (auth tag —
    signature *or* MAC), ``Aead`` (authenticated encryption).
 2. Registry: ``alg_id -> primitive`` (algorithm agility / downgrade-safe).
-3. ``SecureContract``: the envelope + the API (serialize / sign / verify /
-   deserialize / encrypt_symmetric, plus their counterparts).
+3. ``SecureContract``: the envelope + the API. **Use ``seal`` / ``unseal`` by
+   default** — they always encrypt-and-authenticate, and ``unseal`` refuses any
+   unencrypted message, so encryption is mandatory end-to-end. ``sign`` /
+   ``verify`` (and the lower-level ``encrypt_symmetric`` / ``serialize``) remain
+   for the rare auth-only case and for tests.
 
 Defaults (chosen for a CPU/bandwidth-constrained mesh): CBOR codec, HMAC-SHA256
 (truncated) for the auth-only path, ChaCha20-Poly1305 for the always-on
@@ -270,3 +273,42 @@ class SecureContract:
             kid=kid, counter=counter, payload=payload, codec_id=codec_id,
             sig_id=sig_id, aead_id=aead_id, nonce=nonce, tag=tag, version=version,
         )
+
+    # -- enforced always-encrypt API (use these by default) ------------------
+
+    @staticmethod
+    def seal(
+        message: Any,
+        *,
+        key: bytes,
+        kid: bytes,
+        counter: int,
+        aead: Aead = DEFAULT_AEAD,
+        codec: Codec = DEFAULT_CODEC,
+        nonce: bytes | None = None,
+    ) -> bytes:
+        """
+        Encrypt-and-authenticate a message and return wire bytes — the blessed
+        path. Every sealed message is confidential **and** authenticated (the
+        AEAD tag is the authentication). Prefer this over ``sign`` for normal
+        traffic; ``sign``/``verify`` remain for the rare auth-only case.
+        """
+        plain = SecureContract(
+            kid=kid, counter=counter, payload=codec.encode(message), codec_id=codec.alg_id
+        )
+        return plain.encrypt_symmetric(key=key, aead=aead, nonce=nonce).serialize()
+
+    @staticmethod
+    def unseal(
+        wire: bytes, cls: type[Any], *, key: bytes, registry: CryptoRegistry = REGISTRY
+    ) -> Any:
+        """
+        Decrypt + authenticate a sealed message back into ``cls``. **Rejects any
+        non-encrypted envelope**, so a plaintext (sign-only) message can never
+        slip through this path — this is what makes encryption mandatory
+        end-to-end when both sides use seal/unseal.
+        """
+        sc = SecureContract.deserialize(wire)
+        if sc.aead_id == AEAD_NONE:
+            raise AuthenticationError("refusing unencrypted message: encryption is required")
+        return sc.decrypt_symmetric(key=key, registry=registry).payload_as(cls, registry=registry)

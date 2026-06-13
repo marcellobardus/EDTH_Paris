@@ -106,3 +106,32 @@ def test_signer_tag_size_is_tunable() -> None:
     sc = SecureContract.sign(_msg(), key=key, kid=KID, counter=1, signer=short)
     assert len(sc.tag) == 8
     assert short.verify(sc._header_bytes() + sc.payload, sc.tag, key)
+
+
+# --- enforced seal / unseal -------------------------------------------------
+
+def test_seal_unseal_roundtrip() -> None:
+    key = os.urandom(32)
+    wire = SecureContract.seal(_msg(), key=key, kid=KID, counter=1)
+    assert SecureContract.deserialize(wire).aead_id == AEAD_CHACHA20POLY1305
+    assert _same(SecureContract.unseal(wire, RadarDetection, key=key), _msg())
+
+
+def test_seal_hides_plaintext() -> None:
+    # Confidentiality: the cleartext radar_id must not appear on the wire.
+    wire = SecureContract.seal(_msg(), key=os.urandom(32), kid=KID, counter=1)
+    assert b"radar1" not in wire
+
+
+def test_unseal_refuses_unencrypted_message() -> None:
+    # The enforcement: a sign-only (plaintext) envelope cannot pass through unseal.
+    key = os.urandom(32)
+    plaintext_wire = SecureContract.sign(_msg(), key=key, kid=KID, counter=1).serialize()
+    with pytest.raises(AuthenticationError):
+        SecureContract.unseal(plaintext_wire, RadarDetection, key=key)
+
+
+def test_unseal_wrong_key_raises() -> None:
+    wire = SecureContract.seal(_msg(), key=os.urandom(32), kid=KID, counter=1)
+    with pytest.raises(AuthenticationError):
+        SecureContract.unseal(wire, RadarDetection, key=os.urandom(32))

@@ -1,0 +1,16 @@
+{
+  "name": "edth-gzweb",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.0.0",
+    "gzweb": "3.0.1"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

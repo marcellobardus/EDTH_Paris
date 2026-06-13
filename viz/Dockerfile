@@ -2,6 +2,7 @@ FROM edth-base:latest
 
 WORKDIR /app
 
+COPY pyproject.toml uv.lock ./
 COPY contracts/ ./contracts/
 COPY viz/       ./viz/
 COPY config/    ./config/

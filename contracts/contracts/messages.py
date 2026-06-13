@@ -108,10 +108,12 @@ class Claim:
     """
     Broadcast during claim-and-confirm re-tasking.
     An interceptor claims it intends to pursue target_track_id.
-    Higher interceptor_id wins conflicts on the same target.
+    Conflicts on the same target are resolved by highest `score`;
+    interceptor_id breaks ties (deterministic, so every peer agrees).
     """
     interceptor_id: str
     target_track_id: str
+    score: float                           # engagement value of this claim (higher wins)
     timestamp: float
 
 

@@ -1,10 +1,19 @@
-// Connexion directe au WebSocket Gazebo (port 9002, gz-sim-websocket-server-system).
-// Fournit les positions temps réel "ground truth" des objets de la simulation.
-// Reconnexion automatique avec backoff exponentiel.
+// Connexion au WebSocket Gazebo (port 9002) via la lib officielle `gzweb`.
+//
+// La sim lance un bridge `gz::launch::WebsocketServer` (protocole gz-transport
+// WebSocket : handshake `auth`/`protos`, puis frames `pub,<topic>,<type>,<protobuf>`).
+// La lib `gzweb` (Transport + Topic) gère tout ce protocole et décode le protobuf,
+// nous livrant des messages JS prêts à l'emploi — on ne refait donc PAS le parsing.
+//
+// On souscrit aux poses dynamiques du monde et on en extrait les positions des
+// modèles (interceptor_1/2/3, shaheds…) pour alimenter la carte 2D du dashboard.
+
+import { Transport, Topic } from 'gzweb'
 
 const GZ_WS_URL = 'ws://localhost:9002'
-const BACKOFF_INITIAL = 1000
-const BACKOFF_MAX = 5000
+const WORLD = 'intercept_scenario'
+const DYNAMIC_POSE_TOPIC = `/world/${WORLD}/dynamic_pose/info`
+const POSE_TOPIC = `/world/${WORLD}/pose/info`
 
 export interface GroundTruthObject {
   object_id: string
@@ -22,79 +31,68 @@ export interface GroundTruth {
 type GroundTruthCb = (gt: GroundTruth) => void
 type StatusCb = (connected: boolean) => void
 
-let _ws: WebSocket | null = null
-let _backoff = BACKOFF_INITIAL
+let _transport: Transport | null = null
 let _groundTruthCb: GroundTruthCb | null = null
 let _statusCb: StatusCb | null = null
+
+// Dernières positions connues par modèle (les frames dynamic_pose ne contiennent
+// que les modèles qui ont bougé ; on conserve un état cumulé).
+const _positions = new Map<string, [number, number, number]>()
 
 export function onGroundTruth(cb: GroundTruthCb): void { _groundTruthCb = cb }
 export function onStatus(cb: StatusCb): void { _statusCb = cb }
 
-function _setStatus(connected: boolean): void {
-  _statusCb?.(connected)
+function classify(name: string): GroundTruthObject['kind'] {
+  return /^interceptor/i.test(name) || /^i\d/.test(name) ? 'interceptor' : 'shahed'
 }
 
+// Un Pose_V décodé ressemble à { pose: [{ name, position:{x,y,z}, orientation:{…} }, …] }
 interface GzPose {
   name?: string
   position?: { x?: number; y?: number; z?: number }
 }
 
-function _handleMessage(raw: string): void {
-  let msg: any
-  try { msg = JSON.parse(raw) } catch { return }
+function handlePoseV(msg: { pose?: GzPose[] }): void {
+  const poses = msg?.pose ?? []
+  for (const p of poses) {
+    if (!p.name) continue
+    _positions.set(p.name, [p.position?.x ?? 0, p.position?.y ?? 0, p.position?.z ?? 0])
+  }
 
-  // Gazebo encapsule les messages avec un champ "type"
-  const type: string = msg?.type ?? msg?.msg_type ?? ''
-
-  if (type.includes('Pose_V') || type.includes('pose_v')) {
-    const poses: GzPose[] = msg.data?.pose ?? msg.pose ?? []
-    const objects: GroundTruthObject[] = poses.map(p => {
-      const name = p.name ?? ''
-      const kind: GroundTruthObject['kind'] =
-        name.startsWith('interceptor') || /^i\d/.test(name) ? 'interceptor' : 'shahed'
-      return {
-        object_id: name,
-        kind,
-        position: [p.position?.x ?? 0, p.position?.y ?? 0, p.position?.z ?? 0],
-        velocity: [0, 0, 0],
-        alive: true,
-      }
+  const objects: GroundTruthObject[] = []
+  for (const [name, position] of _positions) {
+    objects.push({
+      object_id: name,
+      kind: classify(name),
+      position,
+      velocity: [0, 0, 0], // Gazebo ne publie pas la vélocité ici ; non requis pour la carte
+      alive: true,
     })
-    _groundTruthCb?.({ objects, timestamp: Date.now() / 1000 })
   }
+  _groundTruthCb?.({ objects, timestamp: Date.now() / 1000 })
 }
 
-function connect(): void {
-  if (_ws) return
+export function connectGazebo(): void {
+  if (_transport) return
 
-  _ws = new WebSocket(GZ_WS_URL)
+  _transport = new Transport()
 
-  _ws.onopen = () => {
-    _backoff = BACKOFF_INITIAL
-    _setStatus(true)
-    console.info('[gz-ws] Connected to Gazebo WebSocket')
-    _ws?.send(JSON.stringify({ op: 'subscribe', topic: '/world/world_demo/dynamic_pose/info' }))
-    _ws?.send(JSON.stringify({ op: 'subscribe', topic: '/world/world_demo/pose/info' }))
-  }
+  _transport.getConnectionStatus().subscribe((status: string) => {
+    _statusCb?.(status === 'connected')
+    if (status === 'connected') {
+      console.info('[gz-ws] connecté — souscription aux poses')
+      _transport?.subscribe(new Topic(DYNAMIC_POSE_TOPIC, handlePoseV))
+      _transport?.subscribe(new Topic(POSE_TOPIC, handlePoseV))
+    } else if (status === 'error' || status === 'disconnected') {
+      console.warn(`[gz-ws] ${status}`)
+    }
+  })
 
-  _ws.onmessage = (e) => _handleMessage(e.data as string)
-
-  _ws.onclose = () => {
-    _ws = null
-    _setStatus(false)
-    console.warn(`[gz-ws] Disconnected — retry in ${_backoff}ms`)
-    setTimeout(connect, _backoff)
-    _backoff = Math.min(_backoff * 2, BACKOFF_MAX)
-  }
-
-  _ws.onerror = () => {
-    // onclose s'exécutera ensuite — rien à faire ici
-  }
+  _transport.connect(GZ_WS_URL)
 }
-
-export function connectGazebo(): void { connect() }
 
 export function disconnectGazebo(): void {
-  if (_ws) { _ws.onclose = null; _ws.close(); _ws = null }
-  _setStatus(false)
+  if (_transport) { _transport.disconnect(); _transport = null }
+  _positions.clear()
+  _statusCb?.(false)
 }

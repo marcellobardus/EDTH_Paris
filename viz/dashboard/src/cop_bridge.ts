@@ -26,6 +26,16 @@ const INTERCEPTOR_IDS = ['i1', 'i2', 'i3']
 let _pollTimer: ReturnType<typeof setInterval> | null = null
 let _latestGroundTruth: GroundTruth | null = null
 
+// Normalise un nom de modèle Gazebo vers l'id utilisé côté API/mock.
+//   interceptor_1 → i1   |   shahed_1 / drone_1 → t1   |   t1 → t1 (inchangé)
+function normalizeId(name: string): string {
+  const m = name.match(/(\d+)$/)
+  const n = m ? m[1] : ''
+  if (/^interceptor/i.test(name)) return `i${n}`
+  if (/^(shahed|drone|threat)/i.test(name)) return `t${n}`
+  return name
+}
+
 // ── Fusion : positions Gazebo prioritaires sur celles de l'API ──────────────────
 function applyGroundTruth(tracks: Track[], interceptors: Interceptor[]): void {
   const gt = _latestGroundTruth
@@ -34,11 +44,12 @@ function applyGroundTruth(tracks: Track[], interceptors: Interceptor[]): void {
   if (Date.now() / 1000 - gt.timestamp > 2) return
 
   for (const obj of gt.objects) {
+    const id = normalizeId(obj.object_id)
     if (obj.kind === 'shahed') {
-      const t = tracks.find(x => x.track_id === obj.object_id)
+      const t = tracks.find(x => x.track_id === id)
       if (t) t.position = obj.position
     } else {
-      const intr = interceptors.find(x => x.interceptor_id === obj.object_id)
+      const intr = interceptors.find(x => x.interceptor_id === id)
       if (intr) intr.position = obj.position
     }
   }

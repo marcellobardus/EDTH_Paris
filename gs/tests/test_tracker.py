@@ -109,3 +109,40 @@ def test_fused_position_tracks_ground_truth() -> None:
     assert abs(t.velocity[0] - 50.0) < 8.0  # x-velocity recovered
     assert t.alive is True
     assert len(t.covariance) == 6 and len(t.covariance[0]) == 6
+
+
+def test_tracks_survive_intermittent_missed_detections() -> None:
+    # 20% of scans miss each target; coasting must absorb the sporadic gaps
+    # without dropping or duplicating tracks.
+    radar = _radar(_THREE, prob_detect=0.8)
+    tracker = MultiTargetTracker(start_time=T0)
+
+    counts: list[int] = []
+    for k in range(1, 26):
+        counts.append(len(tracker.process(radar.scan(T0 + timedelta(seconds=k)), float(k))))
+
+    assert all(c == 3 for c in counts[8:])  # three tracks held throughout
+
+
+def test_ids_persist_through_close_crossing() -> None:
+    # Two targets whose ground tracks cross near the origin but stay 50 m apart
+    # in altitude — close in plan view, cleanly separable in 3-D. GNN should hold
+    # both identities through the crossing rather than swapping them.
+    crossing = [
+        TargetInit("west_east", (-2000.0, 50.0, 0.0, 0.0, 100.0, 0.0)),
+        TargetInit("south_north", (0.0, 0.0, -2000.0, 50.0, 150.0, 0.0)),
+    ]
+    radar = _radar(crossing, prob_detect=1.0)
+    tracker = MultiTargetTracker(start_time=T0)
+
+    ids_before: frozenset[str] = frozenset()
+    ids_after: frozenset[str] = frozenset()
+    for k in range(1, 46):
+        tracks = tracker.process(radar.scan(T0 + timedelta(seconds=k)), float(k))
+        if k == 10:  # well before the crossing
+            ids_before = frozenset(t.track_id for t in tracks)
+        if k == 45:  # well after it
+            ids_after = frozenset(t.track_id for t in tracks)
+
+    assert len(ids_before) == 2
+    assert ids_after == ids_before  # same two IDs, no swap or re-initiation

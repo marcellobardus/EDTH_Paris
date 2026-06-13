@@ -41,7 +41,7 @@ class TrackPublisher:
         bus: Bus,
         *,
         start_time: datetime,
-        on_tracks: Callable[[list[Track]], None] | None = None,
+        on_tracks: Callable[[list[Track], float], None] | None = None,
         **tracker_kwargs: Any,  # forwarded to MultiTargetTracker (the tuning knobs)
     ) -> None:
         self._bus = bus
@@ -75,5 +75,5 @@ class TrackPublisher:
         for track in tracks:
             self._bus.publish(Topics.GS_TRACKS, track)
         if self._on_tracks is not None:
-            self._on_tracks(tracks)
+            self._on_tracks(tracks, timestamp)
         return tracks

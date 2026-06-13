@@ -23,6 +23,7 @@ when a new drone happens to spawn would starve it.
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import random
 import time
@@ -32,6 +33,8 @@ from contracts.bus import Bus
 from contracts.topics import Topics
 
 from sim.radar_stonesoup import StoneSoupRadar, TargetInit
+
+log = logging.getLogger("radar")
 
 
 def random_incoming(target_id: str, rng: random.Random) -> TargetInit:
@@ -68,6 +71,12 @@ def main() -> None:
     parser.add_argument("--addr", default="tcp://127.0.0.1:5556", help="ZeroMQ address")
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s.%(msecs)03d | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     rng = random.Random(args.seed)
     bus = _make_bus(args.transport, args.addr)
 
@@ -81,10 +90,13 @@ def main() -> None:
         seed=rng.randrange(1_000_000),
     )
 
-    print(
-        f"Radar node ({args.transport}) — scanning every {args.scan_interval:g}s, "
-        f"new drone every {args.min:g}–{args.max:g}s, "
-        f"publishing on {Topics.RADAR_DETECTIONS}. Ctrl-C to stop.\n"
+    log.info(
+        "radar (%s) scanning every %gs, new drone every %g-%gs, publishing on %s. Ctrl-C to stop.",
+        args.transport,
+        args.scan_interval,
+        args.min,
+        args.max,
+        Topics.RADAR_DETECTIONS,
     )
     scans = 0
     spawned = 0
@@ -98,17 +110,21 @@ def main() -> None:
                 spawned += 1
                 radar.add_target(random_incoming(f"drone-{spawned}", rng))
                 next_spawn = elapsed + rng.uniform(args.min, args.max)
-                print(f"  spawn drone-{spawned}")
+                log.info("spawn drone-%d", spawned)
             scans += 1
-            for det in radar.scan(datetime.now()):
-                x, y, z = det.position
-                rng_m = math.sqrt(x * x + y * y + z * z)
-                print(
-                    f"  TX [{Topics.RADAR_DETECTIONS}] t={det.timestamp:7.1f}s  "
-                    f"range={rng_m:6.0f} m"
+            dets = radar.scan(datetime.now())
+            if dets:
+                ranges = sorted(round(math.dist((0.0, 0.0, 0.0), d.position)) for d in dets)
+                log.info(
+                    "scan #%d t=%6.1fs  TX %d det on %s  ranges=%sm",
+                    scans,
+                    dets[0].timestamp,
+                    len(dets),
+                    Topics.RADAR_DETECTIONS,
+                    ranges,
                 )
     except KeyboardInterrupt:
-        print("\nRadar node stopped.")
+        log.info("radar stopped.")
 
 
 if __name__ == "__main__":

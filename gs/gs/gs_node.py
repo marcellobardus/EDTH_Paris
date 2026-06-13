@@ -22,6 +22,7 @@ Run the listener first, then the radar in another terminal:
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -35,6 +36,7 @@ from contracts.topics import Topics
 from gs.track_publisher import TrackPublisher
 
 T = TypeVar("T")
+log = logging.getLogger("gs")
 
 
 class _SplitBus:
@@ -56,22 +58,29 @@ class _SplitBus:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Continuous ground-station tracker")
     parser.add_argument("--addr", default="tcp://127.0.0.1:5556", help="detections SUB address")
-    parser.add_argument(
-        "--tracks-addr", default="tcp://127.0.0.1:5557", help="tracks PUB address"
-    )
+    parser.add_argument("--tracks-addr", default="tcp://127.0.0.1:5557", help="tracks PUB address")
     parser.add_argument("--rate", type=float, default=10.0, help="tracker tick rate (Hz)")
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s.%(msecs)03d | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     detections_in = ZmqBus(args.addr, bind=True)  # the ground station is the stable endpoint
     tracks_out = ZmqBus(args.tracks_addr, bind=True)
     tick_interval = 1.0 / args.rate
 
-    def on_tracks(tracks: list[Track]) -> None:
-        summary = ", ".join(
-            f"{t.track_id[:8]}@({t.position[0]:.0f},{t.position[1]:.0f},{t.position[2]:.0f})"
-            for t in tracks
+    def on_tracks(tracks: list[Track], scenario_t: float) -> None:
+        summary = (
+            ", ".join(
+                f"{t.track_id[:8]}@({t.position[0]:.0f},{t.position[1]:.0f},{t.position[2]:.0f})"
+                for t in tracks
+            )
+            or "(none confirmed yet)"
         )
-        print(f"  tracks[{len(tracks)}]: {summary}")
+        log.info("scan t=%6.1fs  tracks[%d]: %s", scenario_t, len(tracks), summary)
 
     publisher = TrackPublisher(
         _SplitBus(detections_in, tracks_out),
@@ -79,9 +88,13 @@ def main() -> None:
         on_tracks=on_tracks,
     )
 
-    print(
-        f"Ground station tracking {Topics.RADAR_DETECTIONS} ({args.addr}) -> "
-        f"{Topics.GS_TRACKS} ({args.tracks_addr}), {args.rate:g} Hz. Ctrl-C to stop.\n"
+    log.info(
+        "tracking %s (%s) -> %s (%s) at %g Hz. Ctrl-C to stop.",
+        Topics.RADAR_DETECTIONS,
+        args.addr,
+        Topics.GS_TRACKS,
+        args.tracks_addr,
+        args.rate,
     )
     next_tick = time.monotonic()
     try:
@@ -92,7 +105,7 @@ def main() -> None:
                 publisher.tick()
                 next_tick = now + tick_interval
     except KeyboardInterrupt:
-        print("\nGround station stopped.")
+        log.info("ground station stopped.")
 
 
 if __name__ == "__main__":

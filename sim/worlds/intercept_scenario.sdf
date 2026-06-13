@@ -113,43 +113,14 @@
         <collision name="fuselage_col">
           <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
         </collision>
-        <visual name="fuselage">
-          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
-          <material>
-            <ambient>0.27 0.35 0.47 1</ambient>
-            <diffuse>0.27 0.35 0.47 1</diffuse>
-            <specular>0.5 0.5 0.5 1</specular>
-          </material>
-        </visual>
-
-        <!-- Left wing -->
-        <visual name="wing_left">
-          <pose>0 -0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material>
-            <ambient>0.22 0.28 0.38 1</ambient>
-            <diffuse>0.22 0.28 0.38 1</diffuse>
-          </material>
-        </visual>
-
-        <!-- Right wing -->
-        <visual name="wing_right">
-          <pose>0 0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material>
-            <ambient>0.22 0.28 0.38 1</ambient>
-            <diffuse>0.22 0.28 0.38 1</diffuse>
-          </material>
-        </visual>
-
-        <!-- Vertical tail -->
-        <visual name="vtail">
-          <pose>-0.25 0 0.09 0 0 0</pose>
-          <geometry><box><size>0.16 0.025 0.14</size></box></geometry>
-          <material>
-            <ambient>0.20 0.25 0.35 1</ambient>
-            <diffuse>0.20 0.25 0.35 1</diffuse>
-          </material>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry>
+            <mesh>
+              <uri>model://quadtailsitter/meshes/body.dae</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
         </visual>
       </link>
 
@@ -163,8 +134,8 @@
         </inertial>
         <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry>
-          <material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material>
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry>
         </visual>
       </link>
       <joint name="rotor_0_joint" type="revolute">
@@ -182,8 +153,8 @@
         </inertial>
         <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry>
-          <material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material>
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry>
         </visual>
       </link>
       <joint name="rotor_1_joint" type="revolute">
@@ -201,8 +172,8 @@
         </inertial>
         <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry>
-          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry>
         </visual>
       </link>
       <joint name="rotor_2_joint" type="revolute">
@@ -220,8 +191,8 @@
         </inertial>
         <collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision>
         <visual name="vis">
-          <geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry>
-          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <pose>0 0 0 0 0 0</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry>
         </visual>
       </link>
       <joint name="rotor_3_joint" type="revolute">
@@ -328,37 +299,22 @@
         <collision name="fuselage_col">
           <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
         </collision>
-        <visual name="fuselage">
-          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
-          <material><ambient>0.27 0.35 0.47 1</ambient><diffuse>0.27 0.35 0.47 1</diffuse><specular>0.5 0.5 0.5 1</specular></material>
-        </visual>
-        <visual name="wing_left">
-          <pose>0 -0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material>
-        </visual>
-        <visual name="wing_right">
-          <pose>0 0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material>
-        </visual>
-        <visual name="vtail">
-          <pose>-0.25 0 0.09 0 0 0</pose>
-          <geometry><box><size>0.16 0.025 0.14</size></box></geometry>
-          <material><ambient>0.20 0.25 0.35 1</ambient><diffuse>0.20 0.25 0.35 1</diffuse></material>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/body.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
         </visual>
       </link>
 
-      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material></visual></link>
+      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_0_joint" type="revolute"><parent>base_link</parent><child>rotor_0</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material></visual></link>
+      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_1_joint" type="revolute"><parent>base_link</parent><child>rotor_1</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material></visual></link>
+      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_2_joint" type="revolute"><parent>base_link</parent><child>rotor_2</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material></visual></link>
+      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
       <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
@@ -399,37 +355,22 @@
         <collision name="fuselage_col">
           <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
         </collision>
-        <visual name="fuselage">
-          <geometry><box><size>0.55 0.18 0.14</size></box></geometry>
-          <material><ambient>0.27 0.35 0.47 1</ambient><diffuse>0.27 0.35 0.47 1</diffuse><specular>0.5 0.5 0.5 1</specular></material>
-        </visual>
-        <visual name="wing_left">
-          <pose>0 -0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material>
-        </visual>
-        <visual name="wing_right">
-          <pose>0 0.42 0 0 0 0</pose>
-          <geometry><box><size>0.38 0.50 0.025</size></box></geometry>
-          <material><ambient>0.22 0.28 0.38 1</ambient><diffuse>0.22 0.28 0.38 1</diffuse></material>
-        </visual>
-        <visual name="vtail">
-          <pose>-0.25 0 0.09 0 0 0</pose>
-          <geometry><box><size>0.16 0.025 0.14</size></box></geometry>
-          <material><ambient>0.20 0.25 0.35 1</ambient><diffuse>0.20 0.25 0.35 1</diffuse></material>
+        <visual name="body_mesh">
+          <pose>-0.005 0 0 0 0 1.5707963268</pose>
+          <geometry><mesh><uri>model://quadtailsitter/meshes/body.dae</uri><scale>0.001 0.001 0.001</scale></mesh></geometry>
         </visual>
       </link>
 
-      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material></visual></link>
+      <link name="rotor_0"><pose>0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_0_joint" type="revolute"><parent>base_link</parent><child>rotor_0</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.12 0.12 0.12 1</ambient><diffuse>0.12 0.12 0.12 1</diffuse></material></visual></link>
+      <link name="rotor_1"><pose>-0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_ccw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_1_joint" type="revolute"><parent>base_link</parent><child>rotor_1</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material></visual></link>
+      <link name="rotor_2"><pose>0.22 0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_2_joint" type="revolute"><parent>base_link</parent><child>rotor_2</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry><material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material></visual></link>
+      <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
       <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>800.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
@@ -486,50 +427,14 @@
         <collision name="body_col">
           <geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry>
         </collision>
-        <visual name="body">
-          <geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry>
-          <material>
-            <ambient>0.60 0.45 0.28 1</ambient>
-            <diffuse>0.63 0.47 0.30 1</diffuse>
-          </material>
-        </visual>
-
-        <!-- Delta wing -->
-        <visual name="wing">
-          <pose>0 0 0 0 0 0</pose>
-          <geometry><box><size>0.70 2.50 0.045</size></box></geometry>
-          <material>
-            <ambient>0.55 0.42 0.26 1</ambient>
-            <diffuse>0.58 0.44 0.28 1</diffuse>
-          </material>
-        </visual>
-
-        <!-- Nose cone -->
-        <visual name="nose">
-          <pose>0.65 0 0 1.5708 0 0</pose>
-          <geometry><cone><radius>0.10</radius><length>0.25</length></cone></geometry>
-          <material><ambient>0.50 0.38 0.22 1</ambient><diffuse>0.50 0.38 0.22 1</diffuse></material>
-        </visual>
-
-        <!-- Rear engine pod -->
-        <visual name="engine">
-          <pose>-0.68 0 0.05 1.5708 0 0</pose>
-          <geometry><cylinder><radius>0.07</radius><length>0.22</length></cylinder></geometry>
-          <material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material>
-        </visual>
-
-        <!-- V-tail fin left -->
-        <visual name="fin_left">
-          <pose>-0.50 -0.15 0.08 0.523 0 0</pose>
-          <geometry><box><size>0.30 0.025 0.25</size></box></geometry>
-          <material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material>
-        </visual>
-
-        <!-- V-tail fin right -->
-        <visual name="fin_right">
-          <pose>-0.50 0.15 0.08 -0.523 0 0</pose>
-          <geometry><box><size>0.30 0.025 0.25</size></box></geometry>
-          <material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry>
+            <mesh>
+              <scale>0.001 0.001 0.001</scale>
+              <uri>model://standard_vtol/meshes/x8_wing.dae</uri>
+            </mesh>
+          </geometry>
         </visual>
       </link>
     </model>
@@ -542,12 +447,10 @@
       <link name="base_link">
         <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
         <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
-        <visual name="body"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry><material><ambient>0.60 0.45 0.28 1</ambient><diffuse>0.63 0.47 0.30 1</diffuse></material></visual>
-        <visual name="wing"><pose>0 0 0 0 0 0</pose><geometry><box><size>0.70 2.50 0.045</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.58 0.44 0.28 1</diffuse></material></visual>
-        <visual name="nose"><pose>0.65 0 0 1.5708 0 0</pose><geometry><cone><radius>0.10</radius><length>0.25</length></cone></geometry><material><ambient>0.50 0.38 0.22 1</ambient><diffuse>0.50 0.38 0.22 1</diffuse></material></visual>
-        <visual name="engine"><pose>-0.68 0 0.05 1.5708 0 0</pose><geometry><cylinder><radius>0.07</radius><length>0.22</length></cylinder></geometry><material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material></visual>
-        <visual name="fin_left"><pose>-0.50 -0.15 0.08 0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
-        <visual name="fin_right"><pose>-0.50 0.15 0.08 -0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
       </link>
     </model>
 
@@ -559,12 +462,10 @@
       <link name="base_link">
         <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
         <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
-        <visual name="body"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry><material><ambient>0.60 0.45 0.28 1</ambient><diffuse>0.63 0.47 0.30 1</diffuse></material></visual>
-        <visual name="wing"><pose>0 0 0 0 0 0</pose><geometry><box><size>0.70 2.50 0.045</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.58 0.44 0.28 1</diffuse></material></visual>
-        <visual name="nose"><pose>0.65 0 0 1.5708 0 0</pose><geometry><cone><radius>0.10</radius><length>0.25</length></cone></geometry><material><ambient>0.50 0.38 0.22 1</ambient><diffuse>0.50 0.38 0.22 1</diffuse></material></visual>
-        <visual name="engine"><pose>-0.68 0 0.05 1.5708 0 0</pose><geometry><cylinder><radius>0.07</radius><length>0.22</length></cylinder></geometry><material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material></visual>
-        <visual name="fin_left"><pose>-0.50 -0.15 0.08 0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
-        <visual name="fin_right"><pose>-0.50 0.15 0.08 -0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
       </link>
     </model>
 
@@ -576,12 +477,10 @@
       <link name="base_link">
         <inertial><mass>200.0</mass><inertia><ixx>10.7</ixx><ixy>0</ixy><ixz>0</ixz><iyy>104.2</iyy><iyz>0</iyz><izz>114.9</izz></inertia></inertial>
         <collision name="body_col"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry></collision>
-        <visual name="body"><geometry><cylinder><radius>0.10</radius><length>1.20</length></cylinder></geometry><material><ambient>0.60 0.45 0.28 1</ambient><diffuse>0.63 0.47 0.30 1</diffuse></material></visual>
-        <visual name="wing"><pose>0 0 0 0 0 0</pose><geometry><box><size>0.70 2.50 0.045</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.58 0.44 0.28 1</diffuse></material></visual>
-        <visual name="nose"><pose>0.65 0 0 1.5708 0 0</pose><geometry><cone><radius>0.10</radius><length>0.25</length></cone></geometry><material><ambient>0.50 0.38 0.22 1</ambient><diffuse>0.50 0.38 0.22 1</diffuse></material></visual>
-        <visual name="engine"><pose>-0.68 0 0.05 1.5708 0 0</pose><geometry><cylinder><radius>0.07</radius><length>0.22</length></cylinder></geometry><material><ambient>0.25 0.25 0.25 1</ambient><diffuse>0.25 0.25 0.25 1</diffuse></material></visual>
-        <visual name="fin_left"><pose>-0.50 -0.15 0.08 0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
-        <visual name="fin_right"><pose>-0.50 0.15 0.08 -0.523 0 0</pose><geometry><box><size>0.30 0.025 0.25</size></box></geometry><material><ambient>0.55 0.42 0.26 1</ambient><diffuse>0.55 0.42 0.26 1</diffuse></material></visual>
+        <visual name="wing_mesh">
+          <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
+          <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
       </link>
     </model>
 

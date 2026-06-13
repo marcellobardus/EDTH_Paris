@@ -17,11 +17,12 @@ PROTOCOL (architecture §4 flowchart, FR-8.3-8.6)
       - otherwise -> COMMIT(T): take the assignment, update the picture, and
           return to IDLE (guidance re-points itself off the new target()).
 
-ARBITRATION IS BY interceptor_id, HIGHEST WINS (FR-8.4 / Claim contract /
-architecture §4 "Higher-ID claim received for T?"). There is no score field on
-Claim. Ids follow the i1..iN convention, so we compare on the trailing integer
-(i10 > i2, not the lexical "i10" < "i2"); ids without a numeric suffix fall back
-to a lexical tie-break.
+ARBITRATION IS BY interceptor_id, HIGHEST WINS (FR-8.4 / architecture §4
+"Higher-ID claim received for T?"). Claim carries a `score` (engagement value)
+that we populate for peers/loggers, but our tie-break ignores it and compares
+ids: the i1..iN convention lets us order on the trailing integer (i10 > i2, not
+the lexical "i10" < "i2"); ids without a numeric suffix fall back to a lexical
+tie-break.
 
 KEY INVARIANTS (the traps the demo dies on)
 -------------------------------------------
@@ -172,7 +173,11 @@ class RetaskingProtocol:
         self._target = target
         self._deadline = now + self.window
         self._lost_target = False
-        self._emit_claim(Claim(self.state.id, target, now))
+        # Engagement value for the Claim contract (closer target = higher). Our
+        # arbitration is by id (see module docstring), so this is informational —
+        # but populated honestly rather than left at a placeholder.
+        score = 1.0 / (1.0 + self._rank_key(target)[0])
+        self._emit_claim(Claim(self.state.id, target, score, now))
 
     def _resolve(self, now: float) -> None:
         target = self._target

@@ -266,12 +266,13 @@ def test_greedy_fallback_after_max_rounds() -> None:
     assert mesh.claims[-1].target_track_id == "t2"
 
     # Round 1: a higher-id peer outranks us on t2 -> we yield and pick t3.
-    i1.proto.on_peer_claim(Claim("i9", "t2", now))
+    # (score is ignored by id-based arbitration; i9 outranks i1 regardless.)
+    i1.proto.on_peer_claim(Claim("i9", "t2", 0.0, now))
     i1.proto.tick(now + 0.4)
     assert mesh.claims[-1].target_track_id == "t3"
 
     # Round 2: outranked again -> max rounds hit -> greedy commit, no further wait.
-    i1.proto.on_peer_claim(Claim("i9", "t3", now + 0.4))
+    i1.proto.on_peer_claim(Claim("i9", "t3", 0.0, now + 0.4))
     i1.proto.tick(now + 0.8)
 
     assert len(mesh.commits) == 1

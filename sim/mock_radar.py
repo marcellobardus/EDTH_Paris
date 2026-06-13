@@ -83,7 +83,7 @@ class _Shahed:
 
 
 def _spawn(cfg: ScenarioConfig, rng: random.Random) -> list[_Shahed]:
-    tx, ty, tz = cfg.target_position
+    tx, ty, tz = cfg.scenario.target_position
     speed_min, speed_max = cfg.shaheds.speed_mps
     r = cfg.shaheds.spawn_radius
     spread = math.radians(cfg.shaheds.spawn_angle_spread_deg)
@@ -267,8 +267,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = _load_config(args.config)
-    seed = args.seed if args.seed is not None else cfg.seed
+    cfg = ScenarioConfig.from_yaml(args.config)
+    seed = args.seed if args.seed is not None else cfg.scenario.seed
 
     if args.transport == "ros2":
         run_ros2(cfg, args.rate_hz, seed, args.fp_prob, args.drop_prob)

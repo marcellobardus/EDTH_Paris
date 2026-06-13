@@ -38,6 +38,7 @@ from contracts.messages import (
     Claim,
     Commit,
     EngagementEvent,
+    GroundTruthObject,
     InterceptorState,
     Track,
     WaypointCommand,
@@ -107,6 +108,13 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
         )
         self.comms.subscribe_list(Topics.GS_TRACKS, Track, self._on_tracks)
         self.comms.subscribe(Topics.ENGAGEMENT, EngagementEvent, self.picture.on_engagement)
+
+        # Sim → agent pose feedback: the sim owns kinematics, so we copy our own
+        # object out of the ground-truth stream into local_state. Without this the
+        # PN guidance and the 5 Hz peer broadcast run on the frozen launch seed.
+        # (The GroundTruth wrapper is flattened to its objects[] on the wire —
+        # serde does not recurse into a dataclass's nested dataclass fields.)
+        self.comms.subscribe_list(Topics.GROUND_TRUTH, GroundTruthObject, self._on_ground_truth)
 
         # Peer state broadcasts + claim/commit (all other interceptors).
         # Convention: ids i1..iN. Peer channels are lossy (FR-7.2).
@@ -178,6 +186,16 @@ class InterceptorAgent(Node):  # type: ignore[misc]  # rclpy.Node is untyped
     def _on_tracks(self, tracks: list[Track]) -> None:
         self.state.update_tracks(tracks)
         self.picture.on_tracks(tracks)
+
+    def _on_ground_truth(self, objects: list[GroundTruthObject]) -> None:
+        # The sim drives our real pose; adopt it so guidance + the state broadcast
+        # are not stuck at the launch seed. We only care about our own object.
+        me = next((o for o in objects if o.object_id == self.state.id), None)
+        if me is None:
+            return
+        self.state.position = me.position
+        self.state.velocity = me.velocity
+        self.state.alive = me.alive
 
     def _publish_state(self) -> None:
         # Refresh our own entry in the picture, then broadcast.

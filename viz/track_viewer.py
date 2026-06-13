@@ -40,7 +40,7 @@ matplotlib.use("Agg")  # default; switched to 'macosx' for the live window in ma
 
 import matplotlib.pyplot as plt  # noqa: I001 — must import after matplotlib.use() above
 
-from contracts.messages import ThreatAssessment, Track
+from contracts.messages import Assignment, ThreatAssessment, Track
 from contracts.topics import Topics
 
 PALETTE = list(plt.cm.tab10.colors)
@@ -62,6 +62,8 @@ class TrackViewer:
         self.last_seen: dict[str, float] = {}  # track_id -> latest scenario time
         self.labels: OrderedDict[str, tuple[str, tuple]] = OrderedDict()
         self.trails: dict[str, deque] = {}
+        # interceptor_id -> {track_id, waypoint, timestamp} (from /gs/assignments)
+        self.assignments: dict[str, dict] = {}
         self.clock = 0.0  # latest scenario timestamp seen
 
     # -- ingest (called by the bus handlers, one message at a time) ----------
@@ -85,14 +87,33 @@ class TrackViewer:
         self.threats[threat.track_id] = threat
         self.clock = max(self.clock, threat.timestamp)
 
+    def on_assignment(self, assignment: Assignment) -> None:
+        """Latest interceptor→track assignment (from /gs/assignments)."""
+        self.assignments[assignment.interceptor_id] = {
+            "track_id": assignment.track_id,
+            "waypoint": assignment.initial_waypoint,
+            "timestamp": assignment.timestamp,
+        }
+        self.clock = max(self.clock, assignment.timestamp)
+
     def expire(self) -> None:
-        """Drop tracks the GS has stopped publishing (dropped/coasted-out)."""
+        """Drop tracks/assignments the GS has stopped publishing."""
         for tid in list(self.tracks):
             if self.clock - self.last_seen[tid] > self.args.expiry:
                 del self.tracks[tid]
                 del self.last_seen[tid]
                 self.trails.pop(tid, None)
                 self.threats.pop(tid, None)
+        for iid in list(self.assignments):
+            if self.clock - self.assignments[iid]["timestamp"] > self.args.expiry:
+                del self.assignments[iid]
+
+    def _assigned_to(self) -> dict[str, list[str]]:
+        """track_id -> the interceptor ids currently assigned to it."""
+        out: dict[str, list[str]] = {}
+        for iid, a in self.assignments.items():
+            out.setdefault(a["track_id"], []).append(iid)
+        return out
 
     # -- draw ----------------------------------------------------------------
 
@@ -111,6 +132,8 @@ class TrackViewer:
         for r in range(1000, lim + 1, 1000):
             ax.add_patch(plt.Circle((0, 0), r, fill=False, ls="--", color="#33405e", alpha=0.7))
 
+        assigned = self._assigned_to()
+
         # Draw least-dangerous first so the highest-threat markers/labels sit on top.
         for tid in sorted(self.tracks, key=self._threat_score):
             track = self.tracks[tid]
@@ -123,6 +146,13 @@ class TrackViewer:
                 tx, ty = zip(*trail)
                 ax.plot(tx, ty, color=colour, lw=1.6, alpha=0.8, zorder=4)
             x, y = track.position[0], track.position[1]
+
+            # Assignment: dotted line to each assigned interceptor's intercept
+            # point, marked with an ×, so you see who is tasked to this target.
+            for iid in assigned.get(tid, []):
+                wx, wy = self.assignments[iid]["waypoint"][:2]
+                ax.plot([x, wx], [y, wy], color=colour, ls=":", lw=1.1, alpha=0.75, zorder=3)
+                ax.plot(wx, wy, marker="x", color=colour, ms=7, mew=1.6, zorder=4)
 
             # Threat "weight": a red halo + marker that grow with urgency.
             ax.scatter(
@@ -147,14 +177,36 @@ class TrackViewer:
 
             eta = self.threats[tid].eta_seconds if tid in self.threats else None
             eta_str = "∞" if eta is None or eta >= 1e8 else f"{eta:.0f}s"
+            tag = "  ◀ " + ",".join(sorted(assigned[tid])) if tid in assigned else ""
             ax.annotate(
-                f"{name}  thr {score:.3f}  (eta {eta_str}, {math.hypot(x, y):.0f} m)",
+                f"{name}  thr {score:.3f}  (eta {eta_str}, {math.hypot(x, y):.0f} m){tag}",
                 (x, y),
                 textcoords="offset points",
                 xytext=(11, 6),
                 color=colour,
                 fontsize=9,
                 fontweight="bold",
+            )
+
+        # Assignment roster — which interceptor is tasked to which threat.
+        if self.assignments:
+            rows = []
+            for iid in sorted(self.assignments):
+                tid = self.assignments[iid]["track_id"]
+                tgt = self.labels[tid][0] if tid in self.labels else tid[:6]
+                rows.append(f"{iid} → {tgt}")
+            ax.text(
+                0.015,
+                0.985,
+                "ASSIGNMENTS\n" + "\n".join(rows),
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                color="white",
+                fontsize=9,
+                family="monospace",
+                bbox={"boxstyle": "round", "fc": "#16203a", "ec": "#33405e", "alpha": 0.9},
+                zorder=7,
             )
 
         top = max(self.tracks, key=self._threat_score, default=None)
@@ -164,8 +216,8 @@ class TrackViewer:
             else ""
         )
         ax.set_title(
-            f"/gs/tracks + /gs/threats (live)   sim t = {self.clock:>5.1f} s   "
-            f"threats: {len(self.tracks)}{top_str}",
+            f"/gs/tracks + /gs/threats + /gs/assignments (live)   sim t = {self.clock:>5.1f} s   "
+            f"threats: {len(self.tracks)}  assigned: {len(self.assignments)}{top_str}",
             color="white",
             fontsize=11,
         )
@@ -183,6 +235,11 @@ def main() -> None:
         "--tracks-addr",
         default="tcp://127.0.0.1:5557",
         help="ground station's GS_TRACKS PUB address (we connect)",
+    )
+    p.add_argument(
+        "--assignments-addr",
+        default="tcp://127.0.0.1:5558",
+        help="assignment node's GS_ASSIGNMENTS PUB address (we connect)",
     )
     p.add_argument("--interval", type=int, default=200, help="ms per redraw")
     p.add_argument(
@@ -235,10 +292,18 @@ def main() -> None:
                         timestamp=float(k),
                     )
                 )
+        # Synthetic assignments so the demo PNG exercises the roster + lines.
+        for i, iid in enumerate(("i1", "i2", "i3")):
+            tid = f"synthetic-{i}"
+            tp = viewer.tracks[tid].position
+            viewer.on_assignment(Assignment(iid, tid, (tp[0] * 0.6, tp[1] * 0.6, tp[2]), 18.0))
         fig, ax = plt.subplots(figsize=(9, 9))
         viewer.render(ax)
         fig.savefig(args.out, dpi=120, facecolor="#0b1021")
-        print(f"[demo] rendered {len(viewer.tracks)} synthetic tracks -> {args.out}")
+        print(
+            f"[demo] rendered {len(viewer.tracks)} tracks, "
+            f"{len(viewer.assignments)} assignments -> {args.out}"
+        )
         return
 
     from agent.bus import ZmqBus
@@ -246,6 +311,8 @@ def main() -> None:
     bus = ZmqBus(args.tracks_addr, bind=False)  # GS binds PUB; we connect SUB
     bus.subscribe(Topics.GS_TRACKS, Track, viewer.on_track)
     bus.subscribe(Topics.GS_THREATS, ThreatAssessment, viewer.on_threat)
+    assign_bus = ZmqBus(args.assignments_addr, bind=False)  # assignment node binds PUB
+    assign_bus.subscribe(Topics.GS_ASSIGNMENTS, Assignment, viewer.on_assignment)
 
     matplotlib.use("macosx", force=True)
     from matplotlib.animation import FuncAnimation
@@ -254,7 +321,8 @@ def main() -> None:
     fig.patch.set_facecolor("#0b1021")
 
     def update(_frame):
-        bus.spin(timeout_ms=10)  # drain any waiting tracks
+        bus.spin(timeout_ms=10)  # drain waiting tracks + threats
+        assign_bus.spin(timeout_ms=0)  # drain waiting assignments
         viewer.expire()
         viewer.render(ax)
 

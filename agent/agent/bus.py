@@ -178,3 +178,73 @@ class ROS2Bus:
 
     def close(self) -> None:
         self._node.destroy_node()
+
+
+# ---------------------------------------------------------------------------
+# ZmqBus — cross-process pub/sub over ZeroMQ (no ROS2 needed)
+# ---------------------------------------------------------------------------
+
+class ZmqBus:
+    """
+    Cross-process publish/subscribe over ZeroMQ — lets *separate programs* (a
+    radar process, a ground-station process) talk without ROS2/DDS. Messages
+    are JSON in a multipart ``[topic, payload]`` frame; subscribers filter by
+    topic prefix.
+
+    One side binds, the others connect. For the simple radar -> ground-station
+    case the **listener binds** (``bind=True``) because it is the stable, always
+    -on endpoint, and the radar connects. A full many-to-many mesh would need an
+    XPUB/XSUB proxy — out of scope here.
+
+    ``pyzmq`` is imported lazily, so importing this module works without it.
+    The owner drives delivery by calling :meth:`spin` in its loop.
+    """
+
+    def __init__(self, addr: str = "tcp://127.0.0.1:5556", *, bind: bool = False) -> None:
+        import zmq
+
+        self._zmq = zmq
+        self._ctx = zmq.Context.instance()
+        self._addr = addr
+        self._bind = bind
+        self._pub: Any = None
+        self._sub: Any = None
+        self._handlers: dict[str, list[tuple[type[Any], Handler]]] = {}
+
+    def _endpoint(self, socket: Any) -> None:
+        if self._bind:
+            socket.bind(self._addr)
+        else:
+            socket.connect(self._addr)
+
+    def publish(self, topic: str, message: Any) -> None:
+        if self._pub is None:
+            self._pub = self._ctx.socket(self._zmq.PUB)
+            self._endpoint(self._pub)
+        self._pub.send_multipart([topic.encode(), json.dumps(asdict(message)).encode()])
+
+    def subscribe(self, topic: str, msg_type: type[T], handler: Callable[[T], None]) -> None:
+        if self._sub is None:
+            self._sub = self._ctx.socket(self._zmq.SUB)
+            self._endpoint(self._sub)
+        self._sub.setsockopt(self._zmq.SUBSCRIBE, topic.encode())
+        self._handlers.setdefault(topic, []).append((msg_type, handler))
+
+    def spin(self, timeout_ms: int = 100) -> int:
+        """Deliver any waiting messages to handlers. Returns the number handled."""
+        if self._sub is None:
+            return 0
+        handled = 0
+        while self._sub.poll(timeout=timeout_ms):
+            topic_b, payload = self._sub.recv_multipart()
+            for msg_type, handler in self._handlers.get(topic_b.decode(), []):
+                handler(msg_type(**json.loads(payload.decode())))
+                handled += 1
+            timeout_ms = 0  # drain the rest without blocking
+        return handled
+
+    def close(self) -> None:
+        if self._pub is not None:
+            self._pub.close()
+        if self._sub is not None:
+            self._sub.close()

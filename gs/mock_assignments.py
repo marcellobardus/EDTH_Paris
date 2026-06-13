@@ -27,28 +27,14 @@ import random
 import sys
 import time
 
-import yaml
-
 from contracts.config import ScenarioConfig
 from contracts.messages import Assignment, Track
 from contracts.topics import Topics
 
-
-# ── Config loading (handles nested YAML structure) ────────────────────────────
-
-def _load_config(path: str) -> ScenarioConfig:
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    if "scenario" in data:
-        top = data.pop("scenario")
-        data.update(top)
-    return ScenarioConfig(**data)
-
-
 # ── Synthetic data generation ─────────────────────────────────────────────────
 
 def _make_tracks(cfg: ScenarioConfig, rng: random.Random, t: float) -> list[Track]:
-    tx, ty, tz = cfg.target_position
+    tx, ty, tz = cfg.scenario.target_position
     speed_min, speed_max = cfg.shaheds.speed_mps
     r = cfg.shaheds.spawn_radius
 
@@ -211,8 +197,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = _load_config(args.config)
-    seed = args.seed if args.seed is not None else cfg.seed
+    cfg = ScenarioConfig.from_yaml(args.config)
+    seed = args.seed if args.seed is not None else cfg.scenario.seed
 
     if args.transport == "ros2":
         run_ros2(cfg, seed, args.repeat)

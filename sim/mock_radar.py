@@ -24,8 +24,6 @@ import random
 import sys
 import time
 
-import yaml
-
 from contracts.config import ScenarioConfig
 from contracts.messages import RadarDetection
 from contracts.topics import Topics
@@ -77,7 +75,7 @@ class _Shahed:
 
 
 def _spawn(cfg: ScenarioConfig, rng: random.Random) -> list[_Shahed]:
-    tx, ty, tz = cfg.target_position
+    tx, ty, tz = cfg.scenario.target_position
     speed_min, speed_max = cfg.shaheds.speed_mps
     r = cfg.shaheds.spawn_radius
     spread = math.radians(cfg.shaheds.spawn_angle_spread_deg)
@@ -131,18 +129,6 @@ def _false_positive(radar_cfg, rng: random.Random,
         ),
         timestamp=t,
     )
-
-
-# ── Config loading (handles nested YAML structure) ────────────────────────────
-
-def _load_config(path: str) -> ScenarioConfig:
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    # scenario_default.yaml nests general params under a 'scenario' key
-    if "scenario" in data:
-        top = data.pop("scenario")
-        data.update(top)
-    return ScenarioConfig(**data)
 
 
 # ── Simulation loop ───────────────────────────────────────────────────────────
@@ -252,8 +238,8 @@ def main() -> None:
                         dest="drop_prob", metavar="PROB")
     args = parser.parse_args()
 
-    cfg = _load_config(args.config)
-    seed = args.seed if args.seed is not None else cfg.seed
+    cfg = ScenarioConfig.from_yaml(args.config)
+    seed = args.seed if args.seed is not None else cfg.scenario.seed
 
     if args.transport == "ros2":
         run_ros2(cfg, args.rate_hz, seed, args.fp_prob, args.drop_prob)

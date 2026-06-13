@@ -32,3 +32,9 @@ comms:
   packet_loss_prob: 0.10
   consensus_window_ms: 400
   max_claim_rounds: 2
+  staleness_timeout_s: 1.5
+
+guidance:
+  update_rate_hz: 10
+  nav_constant: 4.0
+  lookahead_s: 1.0

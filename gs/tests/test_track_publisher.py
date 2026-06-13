@@ -74,16 +74,24 @@ def test_buffer_refills_after_tick_swaps_it() -> None:
     assert len(publisher._buffer) == 3  # refilled, not orphaned
 
 
-def test_idle_ticks_eventually_clear_tracks() -> None:
-    _, radar, publisher, _ = _wire()
-    for k in range(1, 8):
-        radar.scan(T0 + timedelta(seconds=k))
-        publisher.tick()
-    assert publisher.tick()  # three tracks established
-
-    # No more detections: idle ticks advance the clock by tick_interval and
-    # coast the tracks until their covariance crosses the deletion threshold.
-    for _ in range(500):
-        if not publisher.tick():
-            break
+def test_empty_tick_is_a_noop() -> None:
+    # A tick with no buffered detections must not advance the tracker. (The node
+    # ticks far faster than detections arrive; fabricating empty scans here once
+    # coasted every track to deletion before it could confirm.)
+    _, _, publisher, published = _wire()
     assert publisher.tick() == []
+    assert publisher.tick() == []
+    assert published == []
+
+
+def test_tracks_confirm_despite_many_idle_ticks_between_scans() -> None:
+    # Regression for the "tracks[0] forever" bug: the node fires ~10 idle ticks
+    # between 1 Hz scans. Those empty ticks must not prevent confirmation.
+    _, radar, publisher, _ = _wire()
+    last: list[Track] = []
+    for k in range(1, 11):
+        for _ in range(9):  # idle ticks while waiting for the next scan
+            assert publisher.tick() == []  # buffer empty -> no-op
+        radar.scan(T0 + timedelta(seconds=k))  # the scan's detections arrive
+        last = publisher.tick()  # processed on the next tick
+    assert len(last) == 3

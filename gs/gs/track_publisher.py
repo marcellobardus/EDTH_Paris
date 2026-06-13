@@ -7,10 +7,14 @@ solve association jointly. :class:`TrackPublisher` reconciles the two: it buffer
 incoming detections and, on each :meth:`tick`, fuses the accumulated batch and
 publishes the resulting ``Track`` estimates on ``Topics.GS_TRACKS``.
 
-Ticking is decoupled from arrival — the node calls :meth:`tick` on a fixed
-cadence (e.g. 10 Hz) — so the tracker advances at a steady rate regardless of how
-the radar bunches its detections, and keeps coasting/deleting tracks even when
-the radar goes quiet.
+A *tick* corresponds to a radar scan, not a wall-clock instant: the node may tick
+faster than detections arrive, so a tick with an empty buffer is a **no-op**. The
+tracker is advanced only by real detections. (An earlier version coasted on every
+empty tick; with detections sparser than the tick rate that fabricated phantom
+"all targets missed" scans and deleted tracks before they could ever confirm.)
+Coasting/deletion of a genuinely undetected target still happens correctly the
+next time *any* scan arrives, because the tracker predicts each track forward to
+that scan's timestamp.
 
 The class holds no transport details beyond the ``Bus`` it is handed, so tests
 drive it with a ``MockBroker`` and call :meth:`tick` directly (no timer).
@@ -30,14 +34,13 @@ from gs.tracker import MultiTargetTracker
 
 
 class TrackPublisher:
-    """Buffers radar detections and publishes fused tracks on a fixed cadence."""
+    """Buffers radar detections and publishes fused tracks once per scan."""
 
     def __init__(
         self,
         bus: Bus,
         *,
         start_time: datetime,
-        tick_interval_s: float = 0.1,
         on_tracks: Callable[[list[Track]], None] | None = None,
         **tracker_kwargs: Any,  # forwarded to MultiTargetTracker (the tuning knobs)
     ) -> None:
@@ -45,7 +48,6 @@ class TrackPublisher:
         self._tracker = MultiTargetTracker(start_time=start_time, **tracker_kwargs)
         self._buffer: list[RadarDetection] = []
         self._clock: float | None = None  # latest scenario time processed (s)
-        self._tick_interval = tick_interval_s
         self._on_tracks = on_tracks
         bus.subscribe(Topics.RADAR_DETECTIONS, RadarDetection, self._on_detection)
 
@@ -55,24 +57,17 @@ class TrackPublisher:
         self._buffer.append(detection)
 
     def tick(self) -> list[Track]:
-        """Fuse the buffered detections and publish the resulting tracks.
+        """Fuse the detections buffered since the last tick and publish the
+        resulting tracks. Returns the published tracks, or an empty list when no
+        detections have arrived (a no-op tick — the tracker is not advanced)."""
+        if not self._buffer:
+            return []
 
-        Returns the tracks published this tick (empty before the first
-        detection). With detections, the tick is timestamped at the batch's
-        latest detection; without, the clock advances by ``tick_interval_s`` so
-        idle tracks still coast and get deleted.
-        """
         batch = self._buffer
         self._buffer = []
-
-        if batch:
-            timestamp = max(det.timestamp for det in batch)
-            if self._clock is not None:
-                timestamp = max(timestamp, self._clock)  # never step backwards
-        elif self._clock is not None:
-            timestamp = self._clock + self._tick_interval
-        else:
-            return []  # nothing seen yet — nothing to advance
+        timestamp = max(det.timestamp for det in batch)
+        if self._clock is not None:
+            timestamp = max(timestamp, self._clock)  # never step backwards
 
         tracks = self._tracker.process(batch, timestamp)
         self._clock = timestamp

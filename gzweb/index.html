@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EDTH Sim Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; overflow: hidden; }
+    #gz-scene { width: 100vw; height: 100vh; }
+    #status {
+      position: absolute; top: 10px; left: 10px;
+      color: #ccc; font-family: monospace; font-size: 12px;
+      background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gz-scene"></div>
+  <div id="status">Connecting…</div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -12,9 +12,20 @@ services:
     image: edth-sim:latest
     depends_on: [base]
     network_mode: host          # ROS2 DDS needs host networking for cross-service topics
+    ports:
+      - "9002:9002"             # gz-sim websocket server (consumed by gzweb in the browser)
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
+
+  gzweb:
+    build:
+      context: gzweb
+      dockerfile: Dockerfile
+      network: host             # git clone needs host network during build
+    image: edth-gzweb:latest
+    ports:
+      - "8080:80"               # open http://localhost:8080 to view the simulation
 
   gs:
     build:

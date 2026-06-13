@@ -53,6 +53,7 @@ class StoneSoupRadar:
         position_noise_m: float = 5.0,
         process_noise: float = 1.0,
         prob_detect: float = 1.0,
+        cull_range_m: float | None = None,
         seed: int = 0,
     ) -> None:
         self._rng = np.random.default_rng(seed)
@@ -62,6 +63,7 @@ class StoneSoupRadar:
         self._t0 = start_time
         self._time = start_time
         self._prob_detect = prob_detect
+        self._cull_range_m = cull_range_m
 
         # 3 independent constant-velocity axes -> 6-D state [x,vx,y,vy,z,vz].
         self._transition = CombinedLinearGaussianTransitionModel(
@@ -81,17 +83,30 @@ class StoneSoupRadar:
             for t in targets
         }
 
+    def add_target(self, target: TargetInit) -> None:
+        """Introduce a new target at the radar's current time (drones appearing over time)."""
+        self._truth[target.target_id] = GroundTruthState(
+            StateVector(np.array(target.state, dtype=float).reshape(-1, 1)),
+            timestamp=self._time,
+        )
+
     def scan(self, now: datetime) -> list[RadarDetection]:
         """Advance ground truth to ``now``, then detect + publish. Returns the hits."""
         interval: timedelta = now - self._time
         detections: list[RadarDetection] = []
 
-        for target_id, truth in self._truth.items():
+        for target_id, truth in list(self._truth.items()):
             moved = GroundTruthState(
                 self._transition.function(truth, noise=True, time_interval=interval),
                 timestamp=now,
             )
             self._truth[target_id] = moved
+
+            if self._cull_range_m is not None:
+                px, py, pz = (float(moved.state_vector[i, 0]) for i in (0, 2, 4))
+                if (px * px + py * py + pz * pz) ** 0.5 > self._cull_range_m:
+                    del self._truth[target_id]
+                    continue  # flew out of range
 
             if self._rng.random() >= self._prob_detect:
                 continue  # missed this scan

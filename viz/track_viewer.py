@@ -2,10 +2,13 @@
 """
 LIVE track viewer — the visual end of the distributed pipeline.
 
-Subscribes to the ground station's fused ``Track`` stream on ``/gs/tracks`` over
-ZeroMQ and draws each confirmed Shahed on a real-time 2-D map: a stable colour +
-"Shahed A/B/C..." label + a motion trail, closing on the defended target at the
-origin. This is the 4th process in the chain:
+Subscribes to the ground station's fused ``Track`` stream on ``/gs/tracks`` and
+its ``ThreatAssessment`` scores on ``/gs/threats`` over ZeroMQ, and draws each
+confirmed Shahed on a real-time 2-D map: a stable colour + "Shahed A/B/C..."
+label + a motion trail, closing on the defended target at the origin. Each
+target also carries its **threat weight** — a red halo and marker that grow with
+the score, plus a numeric ``thr``/``eta`` label — so the most imminent threats
+visibly dominate. This is the 4th process in the chain:
 
     world_node ──► radar_sensor_node ──► gs_node ──► track_viewer (this)
        truth          noisy detections     fused tracks    the picture
@@ -35,13 +38,18 @@ import matplotlib
 
 matplotlib.use("Agg")  # default; switched to 'macosx' for the live window in main()
 
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # noqa: I001 — must import after matplotlib.use() above
 
-from contracts.messages import Track
+from contracts.messages import ThreatAssessment, Track
 from contracts.topics import Topics
 
 PALETTE = list(plt.cm.tab10.colors)
 LETTERS = string.ascii_uppercase
+
+# Threat scores are ~1/eta (s): an inbound drone 50 s out scores ~0.02, 10 s out
+# ~0.1. Map that range onto marker/halo size and a danger colour so the most
+# imminent threats visibly dominate the picture.
+THREAT_FULL_SCALE = 0.15  # score at/above which the threat visual is maxed out
 
 
 class TrackViewer:
@@ -49,20 +57,21 @@ class TrackViewer:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.tracks: dict[str, Track] = {}          # track_id -> latest Track
-        self.last_seen: dict[str, float] = {}        # track_id -> latest scenario time
+        self.tracks: dict[str, Track] = {}  # track_id -> latest Track
+        self.threats: dict[str, ThreatAssessment] = {}  # track_id -> latest threat
+        self.last_seen: dict[str, float] = {}  # track_id -> latest scenario time
         self.labels: OrderedDict[str, tuple[str, tuple]] = OrderedDict()
         self.trails: dict[str, deque] = {}
-        self.clock = 0.0                             # latest scenario timestamp seen
+        self.clock = 0.0  # latest scenario timestamp seen
 
-    # -- ingest (called by the bus handler, one Track at a time) -------------
+    # -- ingest (called by the bus handlers, one message at a time) ----------
 
     def on_track(self, track: Track) -> None:
         tid = track.track_id
         self.tracks[tid] = track
         self.last_seen[tid] = track.timestamp
         self.clock = max(self.clock, track.timestamp)
-        if tid not in self.labels:                   # newly seen → name + colour
+        if tid not in self.labels:  # newly seen → name + colour
             idx = len(self.labels)
             self.labels[tid] = (
                 f"Shahed {LETTERS[idx % len(LETTERS)]}",
@@ -71,6 +80,11 @@ class TrackViewer:
             self.trails[tid] = deque(maxlen=60)
         self.trails[tid].append((track.position[0], track.position[1]))
 
+    def on_threat(self, threat: ThreatAssessment) -> None:
+        """Latest threat score for a track (from /gs/threats)."""
+        self.threats[threat.track_id] = threat
+        self.clock = max(self.clock, threat.timestamp)
+
     def expire(self) -> None:
         """Drop tracks the GS has stopped publishing (dropped/coasted-out)."""
         for tid in list(self.tracks):
@@ -78,6 +92,7 @@ class TrackViewer:
                 del self.tracks[tid]
                 del self.last_seen[tid]
                 self.trails.pop(tid, None)
+                self.threats.pop(tid, None)
 
     # -- draw ----------------------------------------------------------------
 
@@ -94,57 +109,132 @@ class TrackViewer:
 
         ax.plot(0, 0, marker="*", color="red", markersize=20, zorder=6)
         for r in range(1000, lim + 1, 1000):
-            ax.add_patch(plt.Circle((0, 0), r, fill=False, ls="--",
-                                    color="#33405e", alpha=0.7))
+            ax.add_patch(plt.Circle((0, 0), r, fill=False, ls="--", color="#33405e", alpha=0.7))
 
-        for tid, track in self.tracks.items():
+        # Draw least-dangerous first so the highest-threat markers/labels sit on top.
+        for tid in sorted(self.tracks, key=self._threat_score):
+            track = self.tracks[tid]
             name, colour = self.labels[tid]
+            score = self._threat_score(tid)
+            urgency = min(score / THREAT_FULL_SCALE, 1.0)  # 0..1 for visuals
+
             trail = self.trails[tid]
             if len(trail) > 1:
                 tx, ty = zip(*trail)
                 ax.plot(tx, ty, color=colour, lw=1.6, alpha=0.8, zorder=4)
             x, y = track.position[0], track.position[1]
-            ax.plot(x, y, marker="o", color=colour, ms=9, zorder=5,
-                    markeredgecolor="white", markeredgewidth=0.6)
-            ax.annotate(f"{name}  ({math.hypot(x, y):.0f} m)", (x, y),
-                        textcoords="offset points", xytext=(9, 5),
-                        color=colour, fontsize=9, fontweight="bold")
 
-        ax.set_title(
-            f"/gs/tracks (live)   sim t = {self.clock:>5.1f} s   "
-            f"classified threats: {len(self.tracks)}",
-            color="white", fontsize=11,
+            # Threat "weight": a red halo + marker that grow with urgency.
+            ax.scatter(
+                x,
+                y,
+                s=120 + 900 * urgency,
+                color="red",
+                alpha=0.10 + 0.35 * urgency,
+                edgecolors="none",
+                zorder=4,
+            )
+            ax.plot(
+                x,
+                y,
+                marker="o",
+                color=colour,
+                ms=9 + 8 * urgency,
+                zorder=5,
+                markeredgecolor="white",
+                markeredgewidth=0.6,
+            )
+
+            eta = self.threats[tid].eta_seconds if tid in self.threats else None
+            eta_str = "∞" if eta is None or eta >= 1e8 else f"{eta:.0f}s"
+            ax.annotate(
+                f"{name}  thr {score:.3f}  (eta {eta_str}, {math.hypot(x, y):.0f} m)",
+                (x, y),
+                textcoords="offset points",
+                xytext=(11, 6),
+                color=colour,
+                fontsize=9,
+                fontweight="bold",
+            )
+
+        top = max(self.tracks, key=self._threat_score, default=None)
+        top_str = (
+            f"  top: {self.labels[top][0]} ({self._threat_score(top):.3f})"
+            if top is not None and self.tracks
+            else ""
         )
+        ax.set_title(
+            f"/gs/tracks + /gs/threats (live)   sim t = {self.clock:>5.1f} s   "
+            f"threats: {len(self.tracks)}{top_str}",
+            color="white",
+            fontsize=11,
+        )
+
+    def _threat_score(self, tid: str) -> float:
+        threat = self.threats.get(tid)
+        return threat.threat_score if threat is not None else 0.0
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tracks-addr", default="tcp://127.0.0.1:5557",
-                   help="ground station's GS_TRACKS PUB address (we connect)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--tracks-addr",
+        default="tcp://127.0.0.1:5557",
+        help="ground station's GS_TRACKS PUB address (we connect)",
+    )
     p.add_argument("--interval", type=int, default=200, help="ms per redraw")
-    p.add_argument("--expiry", type=float, default=3.0,
-                   help="drop a track after this many sim-seconds without an update")
+    p.add_argument(
+        "--expiry",
+        type=float,
+        default=3.0,
+        help="drop a track after this many sim-seconds without an update",
+    )
     p.add_argument("--limit", type=int, default=4500, help="map half-width (m)")
-    p.add_argument("--demo", action="store_true",
-                   help="headless: inject synthetic tracks → PNG (no ZMQ, no window)")
+    p.add_argument(
+        "--demo",
+        action="store_true",
+        help="headless: inject synthetic tracks → PNG (no ZMQ, no window)",
+    )
     p.add_argument("--out", default="viz/track_viewer.png")
     args = p.parse_args()
 
     viewer = TrackViewer(args)
 
     if args.demo:  # verify render + labelling without the live pipeline
-        for k in range(1, 26):
+        # Three drones at deliberately different threat levels: a close, fast
+        # one (high weight), a mid one, and a far, glancing one (low weight).
+        for k in range(1, 19):
             for i, (x0, y0, vx, vy) in enumerate(
-                [(-3000, 0, 50, 0), (0, -3000, 0, 50), (2500, 500, -45, 0)]
+                [(-1500, 0, 70, 0), (0, -2500, 0, 45), (3000, 2000, -30, -15)]
             ):
-                viewer.on_track(Track(
-                    track_id=f"synthetic-{i}",
-                    position=(x0 + vx * k, y0 + vy * k, 100.0),
-                    velocity=(vx, vy, 0.0),
-                    covariance=[[0.0] * 6 for _ in range(6)],
-                    alive=True, timestamp=float(k),
-                ))
+                pos = (x0 + vx * k, y0 + vy * k, 100.0)
+                viewer.on_track(
+                    Track(
+                        track_id=f"synthetic-{i}",
+                        position=pos,
+                        velocity=(vx, vy, 0.0),
+                        covariance=[[0.0] * 6 for _ in range(6)],
+                        alive=True,
+                        timestamp=float(k),
+                    )
+                )
+                # Synthesise a matching threat score (eta to origin) so the demo
+                # PNG exercises the weight visuals without a live ground station.
+                dist = math.hypot(pos[0], pos[1])
+                closing = -(pos[0] * vx + pos[1] * vy) / dist if dist else 0.0
+                eta = dist / closing if closing > 1.0 else 1e9
+                viewer.on_threat(
+                    ThreatAssessment(
+                        track_id=f"synthetic-{i}",
+                        position=pos,
+                        velocity=(vx, vy, 0.0),
+                        threat_score=1.0 / max(eta, 1e-3),
+                        eta_seconds=eta,
+                        timestamp=float(k),
+                    )
+                )
         fig, ax = plt.subplots(figsize=(9, 9))
         viewer.render(ax)
         fig.savefig(args.out, dpi=120, facecolor="#0b1021")
@@ -153,8 +243,9 @@ def main() -> None:
 
     from agent.bus import ZmqBus
 
-    bus = ZmqBus(args.tracks_addr, bind=False)       # GS binds PUB; we connect SUB
+    bus = ZmqBus(args.tracks_addr, bind=False)  # GS binds PUB; we connect SUB
     bus.subscribe(Topics.GS_TRACKS, Track, viewer.on_track)
+    bus.subscribe(Topics.GS_THREATS, ThreatAssessment, viewer.on_threat)
 
     matplotlib.use("macosx", force=True)
     from matplotlib.animation import FuncAnimation
@@ -163,14 +254,16 @@ def main() -> None:
     fig.patch.set_facecolor("#0b1021")
 
     def update(_frame):
-        bus.spin(timeout_ms=10)                      # drain any waiting tracks
+        bus.spin(timeout_ms=10)  # drain any waiting tracks
         viewer.expire()
         viewer.render(ax)
 
     ani = FuncAnimation(fig, update, interval=args.interval, cache_frame_data=False)
     fig._ani = ani  # noqa: SLF001 — pin so it isn't garbage-collected
-    print(f"track viewer connected to {Topics.GS_TRACKS} at {args.tracks_addr}. "
-          f"Waiting for the ground station… close the window to stop.")
+    print(
+        f"track viewer connected to {Topics.GS_TRACKS} at {args.tracks_addr}. "
+        f"Waiting for the ground station… close the window to stop."
+    )
     plt.show()
 
 

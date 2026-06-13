@@ -48,6 +48,7 @@ AEAD_CHACHA20POLY1305 = 1
 # Layer 1 — swappable primitives
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class Codec(Protocol):
     """Deterministic (canonical) serialization of a contract message to bytes."""
@@ -82,6 +83,7 @@ class Aead(Protocol):
 
 
 # ---- concrete implementations --------------------------------------------
+
 
 class CborCodec:
     alg_id = CODEC_CBOR
@@ -126,6 +128,7 @@ class ChaCha20Poly1305Aead:
 # Layer 2 — registry (algorithm agility)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CryptoRegistry:
     codecs: dict[int, Codec] = field(default_factory=dict)
@@ -160,8 +163,36 @@ DEFAULT_AEAD: Aead = ChaCha20Poly1305Aead()
 # Layer 3 — the envelope + API
 # ---------------------------------------------------------------------------
 
+
 class AuthenticationError(Exception):
     """Raised when a tag/AEAD check fails — the message is forged, tampered, or stale-keyed."""
+
+
+class ReplayError(AuthenticationError):
+    """Raised when a message's counter is not newer than the last seen for its sender."""
+
+
+class ReplayGuard:
+    """Per-sender monotonic-counter enforcement — the **stateful** half of replay
+    protection.
+
+    The envelope only *authenticates* the ``counter`` (it is bound into the AEAD
+    AAD, so an attacker cannot forge or alter it) — but authenticating freshness
+    metadata is not the same as *enforcing* it: a valid message replayed verbatim
+    still authenticates. Enforcement needs memory of the highest counter seen per
+    key id, which lives here so the envelope stays stateless and reusable. Pass a
+    shared ``ReplayGuard`` to :meth:`SecureContract.unseal` to reject replays.
+    """
+
+    def __init__(self) -> None:
+        self._high: dict[bytes, int] = {}
+
+    def check(self, kid: bytes, counter: int) -> None:
+        """Accept a strictly-increasing counter per ``kid``; raise on a replay."""
+        last = self._high.get(kid)
+        if last is not None and counter <= last:
+            raise ReplayError(f"stale counter {counter} <= {last} for kid {kid!r}")
+        self._high[kid] = counter
 
 
 @dataclass
@@ -174,14 +205,14 @@ class SecureContract:
     cannot flip an ``alg_id`` (downgrade) or the replay ``counter``.
     """
 
-    kid: bytes                 # key id — which key the receiver should use
-    counter: int               # monotonic per-sender — replay / freshness
-    payload: bytes             # canonical plaintext, or ciphertext if aead_id != 0
+    kid: bytes  # key id — which key the receiver should use
+    counter: int  # monotonic per-sender — replay / freshness
+    payload: bytes  # canonical plaintext, or ciphertext if aead_id != 0
     codec_id: int = CODEC_CBOR
     sig_id: int = SIG_NONE
     aead_id: int = AEAD_NONE
     nonce: bytes = b""
-    tag: bytes = b""           # signature/MAC (auth-only path); empty when AEAD is used
+    tag: bytes = b""  # signature/MAC (auth-only path); empty when AEAD is used
     version: int = 1
 
     # -- header binding -------------------------------------------------------
@@ -189,8 +220,15 @@ class SecureContract:
     def _header_bytes(self) -> bytes:
         """Canonical bytes of the authenticated header (signed prefix / AEAD AAD)."""
         return cbor2.dumps(
-            [self.version, self.codec_id, self.sig_id, self.aead_id, self.kid,
-             self.counter, self.nonce],
+            [
+                self.version,
+                self.codec_id,
+                self.sig_id,
+                self.aead_id,
+                self.kid,
+                self.counter,
+                self.nonce,
+            ],
             canonical=True,
         )
 
@@ -208,8 +246,11 @@ class SecureContract:
     ) -> SecureContract:
         """Build an authenticated (not encrypted) envelope from a message."""
         sc = SecureContract(
-            kid=kid, counter=counter, payload=codec.encode(message),
-            codec_id=codec.alg_id, sig_id=signer.alg_id,
+            kid=kid,
+            counter=counter,
+            payload=codec.encode(message),
+            codec_id=codec.alg_id,
+            sig_id=signer.alg_id,
         )
         sc.tag = signer.sign(sc._header_bytes() + sc.payload, key)
         return sc
@@ -229,9 +270,14 @@ class SecureContract:
         """Encrypt-and-authenticate the payload; the header is the AEAD's AAD."""
         chosen_nonce = nonce if nonce is not None else os.urandom(aead.nonce_size)
         sealed = SecureContract(
-            kid=self.kid, counter=self.counter, payload=self.payload,
-            codec_id=self.codec_id, sig_id=self.sig_id,
-            aead_id=aead.alg_id, nonce=chosen_nonce, version=self.version,
+            kid=self.kid,
+            counter=self.counter,
+            payload=self.payload,
+            codec_id=self.codec_id,
+            sig_id=self.sig_id,
+            aead_id=aead.alg_id,
+            nonce=chosen_nonce,
+            version=self.version,
         )
         sealed.payload = aead.encrypt(key, chosen_nonce, self.payload, sealed._header_bytes())
         return sealed
@@ -248,8 +294,12 @@ class SecureContract:
         except Exception as exc:  # cryptography raises InvalidTag
             raise AuthenticationError("AEAD authentication failed") from exc
         return SecureContract(
-            kid=self.kid, counter=self.counter, payload=plaintext,
-            codec_id=self.codec_id, sig_id=self.sig_id, version=self.version,
+            kid=self.kid,
+            counter=self.counter,
+            payload=plaintext,
+            codec_id=self.codec_id,
+            sig_id=self.sig_id,
+            version=self.version,
         )
 
     # -- payload + wire -------------------------------------------------------
@@ -261,17 +311,42 @@ class SecureContract:
     def serialize(self) -> bytes:
         """Encode the whole envelope to wire bytes."""
         return cbor2.dumps(
-            [self.version, self.codec_id, self.sig_id, self.aead_id,
-             self.kid, self.counter, self.nonce, self.payload, self.tag]
+            [
+                self.version,
+                self.codec_id,
+                self.sig_id,
+                self.aead_id,
+                self.kid,
+                self.counter,
+                self.nonce,
+                self.payload,
+                self.tag,
+            ]
         )
 
     @staticmethod
     def deserialize(wire: bytes) -> SecureContract:
-        """Parse wire bytes into an envelope (reads alg ids; no keys needed)."""
-        version, codec_id, sig_id, aead_id, kid, counter, nonce, payload, tag = cbor2.loads(wire)
+        """Parse wire bytes into an envelope (reads alg ids; no keys needed).
+
+        A malformed or truncated frame raises :class:`AuthenticationError` (not a
+        bare ``ValueError``/``IndexError``) so callers that guard the security
+        boundary on ``AuthenticationError`` catch parse failures too."""
+        try:
+            (version, codec_id, sig_id, aead_id, kid, counter, nonce, payload, tag) = cbor2.loads(
+                wire
+            )
+        except Exception as exc:
+            raise AuthenticationError("malformed SecureContract wire frame") from exc
         return SecureContract(
-            kid=kid, counter=counter, payload=payload, codec_id=codec_id,
-            sig_id=sig_id, aead_id=aead_id, nonce=nonce, tag=tag, version=version,
+            kid=kid,
+            counter=counter,
+            payload=payload,
+            codec_id=codec_id,
+            sig_id=sig_id,
+            aead_id=aead_id,
+            nonce=nonce,
+            tag=tag,
+            version=version,
         )
 
     # -- enforced always-encrypt API (use these by default) ------------------
@@ -300,15 +375,28 @@ class SecureContract:
 
     @staticmethod
     def unseal(
-        wire: bytes, cls: type[Any], *, key: bytes, registry: CryptoRegistry = REGISTRY
+        wire: bytes,
+        cls: type[Any],
+        *,
+        key: bytes,
+        registry: CryptoRegistry = REGISTRY,
+        guard: ReplayGuard | None = None,
     ) -> Any:
         """
         Decrypt + authenticate a sealed message back into ``cls``. **Rejects any
         non-encrypted envelope**, so a plaintext (sign-only) message can never
         slip through this path — this is what makes encryption mandatory
         end-to-end when both sides use seal/unseal.
+
+        Pass a shared :class:`ReplayGuard` to also **enforce** counter freshness:
+        after the AEAD authenticates the envelope (so the counter is trusted), a
+        replayed or out-of-order message raises :class:`ReplayError`. Without a
+        guard the counter is authenticated but not enforced (stateless by design).
         """
         sc = SecureContract.deserialize(wire)
         if sc.aead_id == AEAD_NONE:
             raise AuthenticationError("refusing unencrypted message: encryption is required")
-        return sc.decrypt_symmetric(key=key, registry=registry).payload_as(cls, registry=registry)
+        plain = sc.decrypt_symmetric(key=key, registry=registry)
+        if guard is not None:
+            guard.check(sc.kid, sc.counter)  # post-auth: the counter is now trusted
+        return plain.payload_as(cls, registry=registry)

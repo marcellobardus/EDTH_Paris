@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import Assignment, ThreatAssessment
 from contracts.topics import Topics
 from gs.assignment_publisher import AssignmentPublisher
@@ -99,3 +99,50 @@ def test_stale_threats_expire_from_the_snapshot() -> None:
     covered = {a.track_id for a in result.assignments}
     assert "new" in covered
     assert "old" not in covered  # expired out of the snapshot
+
+
+# --- tick cadence: one-shot burst + continuous (review #1) ------------------
+
+
+def test_oneshot_fires_once_after_stabilization_then_stops() -> None:
+    broker = MockBroker()
+    fleet = _fleet([(-2000.0, 0.0, 0.0), (2000.0, 0.0, 0.0)])
+    fired: list = []
+    pub = AssignmentPublisher(
+        broker.endpoint("gs"),
+        fleet,
+        mode="oneshot",
+        stable_ticks=2,
+        on_assignments=lambda r, t: fired.append(r),
+    )
+    producer = broker.endpoint("threats")
+    sink: list[Assignment] = []
+    broker.endpoint("sink").subscribe(Topics.GS_ASSIGNMENTS, Assignment, sink.append)
+
+    for k in (1.0, 2.0):  # threat present but not yet stable enough
+        producer.publish(Topics.GS_THREATS, _threat("Tl", (-3000.0, 0.0, 100.0), t=k))
+        assert pub.tick(k) is None
+    producer.publish(Topics.GS_THREATS, _threat("Tl", (-3000.0, 0.0, 100.0), t=3.0))
+    result = pub.tick(3.0)  # go-signal: stable for stable_ticks
+    assert result is not None and len(result.assignments) == 1
+    assert fleet.counts()[Status.ASSIGNED] == 1  # committed — pool shrank
+    assert len(fired) == 1
+
+    sink.clear()
+    assert pub.tick(4.0) is None  # does NOT re-solve
+    assert len(fired) == 1
+    assert len(sink) == 1  # but republishes the standing plan
+
+
+def test_continuous_commits_and_grows_the_plan() -> None:
+    broker = MockBroker()
+    fleet = _fleet([(-2000.0, 0.0, 0.0), (2000.0, 0.0, 0.0)])
+    pub = AssignmentPublisher(broker.endpoint("gs"), fleet, mode="continuous")
+    producer = broker.endpoint("threats")
+
+    producer.publish(Topics.GS_THREATS, _threat("Tl", (-3000.0, 0.0, 100.0)))
+    pub.tick(1.0)
+    assert fleet.counts()[Status.ASSIGNED] == 1
+    producer.publish(Topics.GS_THREATS, _threat("Tr", (3000.0, 0.0, 100.0)))
+    pub.tick(2.0)
+    assert fleet.counts()[Status.ASSIGNED] == 2  # second unit committed to the new threat

@@ -117,10 +117,10 @@ class MultiTargetTracker:
         ``RadarDetection``). Detections from the same scan should be passed
         together so the multi-target association is solved jointly.
         """
-        time = self._start_time + timedelta(seconds=timestamp)
-        ss_detections = {self._to_detection(det, time) for det in detections}
+        scan_time = self._start_time + timedelta(seconds=timestamp)
+        ss_detections = {self._to_detection(det, scan_time) for det in detections}
 
-        associations = self._associator.associate(self._tracks, ss_detections, time)
+        associations = self._associator.associate(self._tracks, ss_detections, scan_time)
         associated: set[Detection] = set()
         for track, hypothesis in associations.items():
             if hypothesis:
@@ -130,17 +130,17 @@ class MultiTargetTracker:
                 track.append(hypothesis.prediction)  # coast on the prediction
 
         self._tracks -= self._deleter.delete_tracks(self._tracks)
-        self._tracks |= self._initiator.initiate(ss_detections - associated, time)
+        self._tracks |= self._initiator.initiate(ss_detections - associated, scan_time)
 
         return [_to_contract_track(track, timestamp) for track in self._tracks]
 
-    def _to_detection(self, detection: RadarDetection, time: datetime) -> Detection:
+    def _to_detection(self, detection: RadarDetection, scan_time: datetime) -> Detection:
         """Wrap a ``RadarDetection`` position as a Stone Soup ``Detection``
         carrying the shared measurement model."""
         x, y, z = detection.position
         return Detection(
             StateVector([[x], [y], [z]]),
-            timestamp=time,
+            timestamp=scan_time,
             measurement_model=self._filter.measurement_model,
         )
 

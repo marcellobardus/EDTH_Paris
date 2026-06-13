@@ -18,7 +18,7 @@ import random
 import time
 from datetime import datetime
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import GroundTruth, RadarDetection
 from contracts.topics import Topics
 from gs.launch_decider import LaunchDecider, LaunchDecision
@@ -73,8 +73,8 @@ def main() -> None:
             time.sleep(rng.uniform(args.min, args.max))
             n += 1
             pos, vel = random_drone(rng)
-            world.add(f"shahed-{n}", pos, vel)   # a new drone appears in the world
-            world.step(datetime.now())           # advance + publish truth -> radar -> GS
+            world.add(f"shahed-{n}", pos, vel)  # a new drone appears in the world
+            world.step(datetime.now())  # advance + publish truth -> radar -> GS
     except KeyboardInterrupt:
         print("\nStopped.")
 

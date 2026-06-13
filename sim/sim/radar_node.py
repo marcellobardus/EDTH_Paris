@@ -50,10 +50,10 @@ def random_incoming(target_id: str, rng: random.Random) -> TargetInit:
 
 def _make_bus(transport: str, addr: str) -> Bus:
     if transport == "zmq":
-        from agent.bus import ZmqBus
+        from contracts.bus import ZmqBus
 
         return ZmqBus(addr, bind=False)  # radar connects; the listener binds
-    from agent.bus import MockBroker
+    from contracts.bus import MockBroker
 
     return MockBroker().endpoint("radar1")  # in-process; nobody else hears it
 

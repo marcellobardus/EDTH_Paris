@@ -308,7 +308,7 @@ def main() -> None:
         )
         return
 
-    from agent.bus import ZmqBus
+    from contracts.bus import ZmqBus
 
     bus = ZmqBus(args.tracks_addr, bind=False)  # GS binds PUB; we connect SUB
     bus.subscribe(Topics.GS_TRACKS, Track, viewer.on_track)

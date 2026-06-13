@@ -78,6 +78,15 @@ class FleetUnit:
         return Interceptor(self.interceptor_id, self.position, self.speed_mps, self.range_m)
 
 
+def interceptor_id(index: int) -> str:
+    """The canonical interceptor id for a 0-based fleet index (``i1``, ``i2`` …).
+
+    Single source of truth for the format — the agent (Team 3) keys on the same
+    ids, so the fleet must never grow a second copy of this rule.
+    """
+    return f"i{index + 1}"
+
+
 def ring_positions(center: Vec3, count: int, radius: float) -> list[Vec3]:
     """``count`` distinct sites evenly spaced on a circle of ``radius`` around
     ``center`` (altitude preserved). A single unit sits at the centre."""
@@ -106,23 +115,34 @@ class InterceptorFleet:
         cls,
         cfg: ScenarioConfig,
         *,
+        center: Vec3 | None = None,
         ring_radius: float = 300.0,
+        speed: float | None = None,
+        range_m: float | None = None,
         positions: list[Vec3] | None = None,
     ) -> InterceptorFleet:
-        """Build ``count`` READY units from config. Positions come from an
-        explicit list (verbatim) or a defensive ring around ``launch_position``."""
+        """Build ``count`` READY units from config.
+
+        Positions come from an explicit ``positions`` list (verbatim) or a
+        defensive ring of ``ring_radius`` around ``center`` (default: the config
+        ``launch_position`` — pass the defended asset to centre the ring on it).
+        ``speed``/``range_m`` override the config kinematics when given.
+        """
         ic = cfg.interceptors
+        ctr = ic.launch_position if center is None else center
+        spd = ic.speed_mps if speed is None else speed
+        rg = ic.range_m if range_m is None else range_m
         if positions is None:
-            positions = ring_positions(ic.launch_position, ic.count, ring_radius)
+            positions = ring_positions(ctr, ic.count, ring_radius)
         elif len(positions) != ic.count:
             raise ValueError(f"positions has {len(positions)} entries, expected count={ic.count}")
         units = [
             FleetUnit(
-                interceptor_id=f"i{i + 1}",
+                interceptor_id=interceptor_id(i),
                 position=positions[i],
                 velocity=(0.0, 0.0, 0.0),
-                speed_mps=ic.speed_mps,
-                range_m=ic.range_m,
+                speed_mps=spd,
+                range_m=rg,
                 status=Status.READY,
                 assigned_track_id=None,
                 alive=True,
@@ -185,7 +205,12 @@ class InterceptorFleet:
         if not state.alive:
             u.status = Status.DOWN
         elif u.status in (Status.READY, Status.ASSIGNED):
-            u.status = Status.IN_FLIGHT  # first broadcast => launched
+            # First broadcast => launched. READY (not just ASSIGNED) is allowed on
+            # purpose: in the distributed system an interceptor's state broadcast
+            # can overtake the GS's own mark_assigned, so a unit may appear in
+            # flight before we recorded the commit. Treat the live broadcast as
+            # ground truth rather than dropping it.
+            u.status = Status.IN_FLIGHT
 
     def on_engagement(self, event: EngagementEvent) -> None:
         """Engagement outcome (kill or miss) — the interceptor is spent."""

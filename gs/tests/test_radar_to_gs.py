@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from gs.launch_decider import LaunchDecider
 from sim.radar_stonesoup import StoneSoupRadar, TargetInit
 
@@ -44,7 +44,7 @@ def test_repeated_detections_do_not_relaunch() -> None:
 def test_pool_exhaustion_holds_extra_threats() -> None:
     decider = _run(_TARGETS, pool=3)
     assert decider.threats_seen == 4
-    assert decider.interceptors_committed == 3        # only 3 interceptors available
+    assert decider.interceptors_committed == 3  # only 3 interceptors available
     launched = [d for d in decider.decisions if d.launched]
     held = [d for d in decider.decisions if not d.launched]
     assert len(launched) == 3

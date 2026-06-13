@@ -28,7 +28,7 @@ import argparse
 import logging
 import math
 
-from agent.bus import ZmqBus
+from contracts.bus import ZmqBus
 from contracts.messages import GroundTruth, GroundTruthObject
 from contracts.topics import Topics
 

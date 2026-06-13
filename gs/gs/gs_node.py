@@ -31,39 +31,20 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from collections.abc import Callable
 from datetime import datetime
-from typing import Any, TypeVar
 
-from agent.bus import ZmqBus
-from contracts.bus import Bus
+from contracts.bus import SplitBus, ZmqBus
 from contracts.config import ScenarioConfig
 from contracts.messages import Track
 from contracts.topics import Topics
 
-from gs.assignment_node import build_fleet
-from gs.optimizer import AssignmentOptimizer
+from gs.assignment_publisher import AssignmentPublisher
+from gs.fleet import InterceptorFleet
+from gs.optimizer import AssignmentOptimizer, AssignmentResult
 from gs.threat_assessor import ETA_SENTINEL, ThreatAssessor
 from gs.track_publisher import TrackPublisher
 
-T = TypeVar("T")
 log = logging.getLogger("gs")
-
-
-class _SplitBus:
-    """A ``Bus`` that subscribes on one transport and publishes on another — so
-    the node can receive detections and emit tracks on distinct ZeroMQ
-    endpoints."""
-
-    def __init__(self, inbound: Bus, outbound: Bus) -> None:
-        self._in = inbound
-        self._out = outbound
-
-    def subscribe(self, topic: str, msg_type: type[T], handler: Callable[[T], None]) -> None:
-        self._in.subscribe(topic, msg_type, handler)
-
-    def publish(self, topic: str, message: Any) -> None:
-        self._out.publish(topic, message)
 
 
 def main() -> None:
@@ -108,6 +89,11 @@ def main() -> None:
         action="store_true",
         help="allow intercepts that land after the threat's eta",
     )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="live re-tasking assignment (default: one-shot pre-launch burst, FR-5)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -121,12 +107,33 @@ def main() -> None:
     tick_interval = 1.0 / args.rate
     assessor = ThreatAssessor(tuple(args.target))
 
-    optimizer = None
     fleet = None
+    pub = None
     if args.assign:
         cfg = ScenarioConfig.from_yaml(args.config)
-        fleet = build_fleet(cfg, tuple(args.target), args.ring_radius, args.speed, args.rng)
-        optimizer = AssignmentOptimizer(require_beat_eta=not args.no_beat_eta)
+        fleet = InterceptorFleet.from_config(
+            cfg,
+            center=tuple(args.target),
+            ring_radius=args.ring_radius,
+            speed=args.speed,
+            range_m=args.rng,
+        )
+
+        def _log_assignments(result: AssignmentResult, ts: float) -> None:
+            pairs = " ".join(f"{a.interceptor_id}→{a.track_id[:8]}" for a in result.assignments)
+            log.info("           assigned[%d]: %s", len(result.assignments), pairs or "(none)")
+
+        # The GS already has the scored threats in-process, so we feed the
+        # publisher directly (subscribe_threats=False) and publish on the same
+        # outbound socket as /gs/tracks + /gs/threats.
+        pub = AssignmentPublisher(
+            tracks_out,
+            fleet,
+            optimizer=AssignmentOptimizer(require_beat_eta=not args.no_beat_eta),
+            on_assignments=_log_assignments,
+            mode="continuous" if args.continuous else "oneshot",
+            subscribe_threats=False,
+        )
 
     def on_tracks(tracks: list[Track], scenario_t: float) -> None:
         # Score every fused track and publish it as a threat. /gs/threats rides
@@ -135,14 +142,11 @@ def main() -> None:
         for threat in threats:
             tracks_out.publish(Topics.GS_THREATS, threat)
 
-        # Optional in-process assignment: solve over the current threat snapshot
-        # and the available fleet, publishing /gs/assignments on the same socket.
-        if optimizer is not None and fleet is not None:
-            result = optimizer.assign(threats, fleet.available(), scenario_t)
-            for assignment in result.assignments:
-                tracks_out.publish(Topics.GS_ASSIGNMENTS, assignment)
-            pairs = " ".join(f"{a.interceptor_id}→{a.track_id[:8]}" for a in result.assignments)
-            log.info("           assigned[%d]: %s", len(result.assignments), pairs or "(none)")
+        # Optional in-process assignment: feed the threat snapshot to the
+        # publisher and tick it (one-shot burst or continuous re-tasking).
+        if pub is not None:
+            pub.submit(threats)
+            pub.tick(scenario_t)
 
         summary = (
             ", ".join(
@@ -155,7 +159,7 @@ def main() -> None:
         log.info("scan t=%6.1fs  threats[%d]: %s", scenario_t, len(threats), summary)
 
     publisher = TrackPublisher(
-        _SplitBus(detections_in, tracks_out),
+        SplitBus(detections_in, tracks_out),
         start_time=datetime.now(),
         on_tracks=on_tracks,
     )
@@ -172,7 +176,8 @@ def main() -> None:
     )
     if fleet is not None:
         log.info(
-            "  + in-process Hungarian assignment -> %s (%d interceptors, ring r=%gm)",
+            "  + in-process Hungarian assignment (%s) -> %s (%d interceptors, ring r=%gm)",
+            "continuous" if args.continuous else "oneshot",
             Topics.GS_ASSIGNMENTS,
             len(fleet.snapshot()),
             args.ring_radius,

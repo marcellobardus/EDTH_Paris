@@ -9,9 +9,10 @@ WORLD = Path(__file__).parent.parent / "worlds" / "quadrotor.sdf"
 
 def main() -> None:
     cmd = [
-        "gz", "sim",
-        "-s",           # server only (no GUI — gzweb provides visualization)
-        "-r",           # start running immediately
+        "gz",
+        "sim",
+        "-s",  # server only (no GUI — gzweb provides visualization)
+        "-r",  # start running immediately
         str(WORLD),
     ]
     result = subprocess.run(cmd)

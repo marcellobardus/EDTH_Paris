@@ -35,6 +35,7 @@ def _sealed(enc_key: bytes, counter: int = 2) -> SecureContract:
 
 # --- auth-only (HMAC) -------------------------------------------------------
 
+
 def test_sign_verify_roundtrip() -> None:
     key = os.urandom(32)
     got = SecureContract.deserialize(_signed(key).serialize())
@@ -65,6 +66,7 @@ def test_tampered_header_fails_verify() -> None:
 
 
 # --- encrypted (AEAD) -------------------------------------------------------
+
 
 def test_encrypt_decrypt_roundtrip() -> None:
     key = os.urandom(32)
@@ -99,6 +101,7 @@ def test_tampered_header_breaks_aead() -> None:
 
 # --- swappability -----------------------------------------------------------
 
+
 def test_signer_tag_size_is_tunable() -> None:
     # An 8-byte tag for bandwidth-constrained links — same interface, smaller wire.
     key = os.urandom(32)
@@ -109,6 +112,7 @@ def test_signer_tag_size_is_tunable() -> None:
 
 
 # --- enforced seal / unseal -------------------------------------------------
+
 
 def test_seal_unseal_roundtrip() -> None:
     key = os.urandom(32)
@@ -135,3 +139,69 @@ def test_unseal_wrong_key_raises() -> None:
     wire = SecureContract.seal(_msg(), key=os.urandom(32), kid=KID, counter=1)
     with pytest.raises(AuthenticationError):
         SecureContract.unseal(wire, RadarDetection, key=os.urandom(32))
+
+
+# --- replay enforcement + malformed wire (review #7, #8) --------------------
+
+
+def test_replay_guard_rejects_a_replayed_message() -> None:
+    from contracts.security import ReplayError, ReplayGuard
+
+    key = os.urandom(32)
+    guard = ReplayGuard()
+    wire = SecureContract.seal(_msg(), key=key, kid=KID, counter=1)
+
+    # first delivery authenticates and is accepted
+    assert _same(SecureContract.unseal(wire, RadarDetection, key=key, guard=guard), _msg())
+    # the exact same (valid) frame replayed is rejected
+    with pytest.raises(ReplayError):
+        SecureContract.unseal(wire, RadarDetection, key=key, guard=guard)
+
+
+def test_replay_guard_requires_strictly_increasing_counter() -> None:
+    from contracts.security import ReplayError, ReplayGuard
+
+    key = os.urandom(32)
+    guard = ReplayGuard()
+    SecureContract.unseal(
+        SecureContract.seal(_msg(), key=key, kid=KID, counter=5),
+        RadarDetection,
+        key=key,
+        guard=guard,
+    )
+    # an older counter from the same sender is stale
+    with pytest.raises(ReplayError):
+        SecureContract.unseal(
+            SecureContract.seal(_msg(), key=key, kid=KID, counter=4),
+            RadarDetection,
+            key=key,
+            guard=guard,
+        )
+    # a newer one is fine
+    assert _same(
+        SecureContract.unseal(
+            SecureContract.seal(_msg(), key=key, kid=KID, counter=6),
+            RadarDetection,
+            key=key,
+            guard=guard,
+        ),
+        _msg(),
+    )
+
+
+def test_unseal_without_guard_does_not_enforce_freshness() -> None:
+    # Documented behaviour: the envelope authenticates the counter but does not
+    # enforce it unless a ReplayGuard is supplied — a replay still authenticates.
+    key = os.urandom(32)
+    wire = SecureContract.seal(_msg(), key=key, kid=KID, counter=1)
+    assert _same(SecureContract.unseal(wire, RadarDetection, key=key), _msg())
+    assert _same(SecureContract.unseal(wire, RadarDetection, key=key), _msg())  # no raise
+
+
+def test_deserialize_raises_authentication_error_on_malformed_wire() -> None:
+    for bad in (b"", b"\x00\x01\x02", os.urandom(10)):
+        with pytest.raises(AuthenticationError):
+            SecureContract.deserialize(bad)
+    # and through the unseal boundary too
+    with pytest.raises(AuthenticationError):
+        SecureContract.unseal(b"not-a-frame", RadarDetection, key=os.urandom(32))

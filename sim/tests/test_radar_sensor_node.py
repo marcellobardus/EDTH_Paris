@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import GroundTruth, GroundTruthObject, RadarDetection
 from contracts.topics import Topics
 from sim.radar_sensor import RadarSensor

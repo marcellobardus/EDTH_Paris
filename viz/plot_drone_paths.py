@@ -31,8 +31,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless: render straight to a file
 import matplotlib.pyplot as plt
-
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from gs.tracker import MultiTargetTracker
 from sim.radar_stonesoup import StoneSoupRadar, TargetInit
 
@@ -56,8 +55,12 @@ def spawn_drones(n: int, rng: random.Random) -> list[TargetInit]:
 def run_pipeline(drones, scans, prob_detect, position_noise, seed):
     """Drive radar -> tracker for `scans` ticks, recording everything to plot."""
     radar = StoneSoupRadar(
-        MockBroker().endpoint("radar1"), "radar1", drones,
-        start_time=T0, seed=seed, prob_detect=prob_detect,
+        MockBroker().endpoint("radar1"),
+        "radar1",
+        drones,
+        start_time=T0,
+        seed=seed,
+        prob_detect=prob_detect,
         position_noise_m=position_noise,
     )
     tracker = MultiTargetTracker(start_time=T0)
@@ -90,11 +93,9 @@ def plot(truth_paths, truth_range, detections_xy, track_paths, out: str) -> None
 
     # ---- left: top-down map -------------------------------------------------
     # defended target + range rings
-    ax_map.plot(0, 0, marker="*", color="red", markersize=22, zorder=5,
-                label="defended target")
+    ax_map.plot(0, 0, marker="*", color="red", markersize=22, zorder=5, label="defended target")
     for r in (1000, 2000, 3000):
-        ax_map.add_patch(plt.Circle((0, 0), r, fill=False, ls="--",
-                                    color="lightcoral", alpha=0.5))
+        ax_map.add_patch(plt.Circle((0, 0), r, fill=False, ls="--", color="lightcoral", alpha=0.5))
 
     # true paths (grey) + spawn markers
     first = True
@@ -102,18 +103,19 @@ def plot(truth_paths, truth_range, detections_xy, track_paths, out: str) -> None
         if not pts:
             continue
         xs, ys = zip(*pts)
-        ax_map.plot(xs, ys, color="grey", ls="--", lw=1, alpha=0.7,
-                    label="true path" if first else None)
+        ax_map.plot(
+            xs, ys, color="grey", ls="--", lw=1, alpha=0.7, label="true path" if first else None
+        )
         ax_map.plot(xs[0], ys[0], marker="o", mfc="none", mec="black", ms=9)
-        ax_map.annotate(tid, (xs[0], ys[0]), textcoords="offset points",
-                        xytext=(6, 6), fontsize=9)
+        ax_map.annotate(tid, (xs[0], ys[0]), textcoords="offset points", xytext=(6, 6), fontsize=9)
         first = False
 
     # raw noisy detections (light, scattered)
     if detections_xy:
         dx, dy = zip(*detections_xy)
-        ax_map.scatter(dx, dy, s=8, color="steelblue", alpha=0.25, zorder=2,
-                       label="radar detections (noisy)")
+        ax_map.scatter(
+            dx, dy, s=8, color="steelblue", alpha=0.25, zorder=2, label="radar detections (noisy)"
+        )
 
     # fused tracker estimates (one colour per track)
     cmap = plt.cm.viridis
@@ -121,9 +123,15 @@ def plot(truth_paths, truth_range, detections_xy, track_paths, out: str) -> None
     for n, tid in enumerate(ids):
         pts = track_paths[tid]
         xs, ys = zip(*pts)
-        ax_map.plot(xs, ys, color=cmap(n / max(len(ids) - 1, 1)), lw=2,
-                    marker=".", ms=3,
-                    label="fused track" if n == 0 else None)
+        ax_map.plot(
+            xs,
+            ys,
+            color=cmap(n / max(len(ids) - 1, 1)),
+            lw=2,
+            marker=".",
+            ms=3,
+            label="fused track" if n == 0 else None,
+        )
 
     ax_map.set_aspect("equal")
     ax_map.set_title("Top-down: incoming drones vs. fused tracks")
@@ -144,16 +152,16 @@ def plot(truth_paths, truth_range, detections_xy, track_paths, out: str) -> None
     ax_rng.grid(True, alpha=0.3)
     ax_rng.legend(fontsize=9)
 
-    fig.suptitle("Ground-station tracking — drones closing on the defended target",
-                 fontsize=13)
+    fig.suptitle("Ground-station tracking — drones closing on the defended target", fontsize=13)
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     print(f"wrote {out}")
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--drones", type=int, default=4)
     p.add_argument("--scans", type=int, default=60, help="1 s per scan")
     p.add_argument("--seed", type=int, default=1)

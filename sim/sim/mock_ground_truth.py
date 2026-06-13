@@ -26,7 +26,7 @@ class MockGroundTruth:
         self._bus = bus
         self._t0 = start_time
         self._time = start_time
-        self._objects: dict[str, list[list[float]]] = {}   # id -> [position, velocity]
+        self._objects: dict[str, list[list[float]]] = {}  # id -> [position, velocity]
 
     def add(self, object_id: str, position: Vec3, velocity: Vec3) -> None:
         self._objects[object_id] = [list(position), list(velocity)]

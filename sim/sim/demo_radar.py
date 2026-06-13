@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import RadarDetection
 from contracts.topics import Topics
 

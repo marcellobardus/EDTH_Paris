@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import numpy as np
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import RadarDetection
 from gs.tracker import MultiTargetTracker
 from sim.radar_stonesoup import StoneSoupRadar, TargetInit

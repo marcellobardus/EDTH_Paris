@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import GroundTruth, RadarDetection
 from contracts.topics import Topics
 from gs.launch_decider import LaunchDecider
@@ -29,7 +29,7 @@ def test_ground_truth_is_detected_and_published() -> None:
 
     assert len(received) == 1
     assert received[0].radar_id == "radar1"
-    assert received[0].position[0] > 1900   # near the true 1950, with noise
+    assert received[0].position[0] > 1900  # near the true 1950, with noise
 
 
 def test_full_gazebo_fed_pipeline_drives_launches() -> None:

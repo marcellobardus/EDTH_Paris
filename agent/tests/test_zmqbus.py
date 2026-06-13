@@ -16,15 +16,16 @@ def _detection() -> RadarDetection:
 
 
 def test_zmqbus_delivers_across_sockets() -> None:
-    listener = ZmqBus(ADDR, bind=True)      # the "ground station" binds
+    listener = ZmqBus(ADDR, bind=True)  # the "ground station" binds
     received: list[RadarDetection] = []
     listener.subscribe(Topics.RADAR_DETECTIONS, RadarDetection, received.append)
 
-    radar = ZmqBus(ADDR, bind=False)        # the radar connects + publishes
+    radar = ZmqBus(ADDR, bind=False)  # the radar connects + publishes
 
     # ZeroMQ PUB/SUB drops messages sent before the subscription propagates;
-    # publish repeatedly until one lands (or give up after 2s).
-    deadline = time.time() + 2.0
+    # publish repeatedly until one lands. On localhost the slow-joiner window is
+    # tens of ms; 500 ms is a generous cap that keeps the test fast in CI.
+    deadline = time.time() + 0.5
     while not received and time.time() < deadline:
         radar.publish(Topics.RADAR_DETECTIONS, _detection())
         listener.spin(timeout_ms=50)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from agent.bus import MockBroker
+from contracts.bus import MockBroker
 from contracts.messages import RadarDetection
 from contracts.topics import Topics
 from sim.radar_stonesoup import StoneSoupRadar, TargetInit
@@ -23,11 +23,11 @@ def test_incoming_drone_is_published_on_radar_topic() -> None:
 
     radar.scan(t0 + timedelta(seconds=1))
 
-    assert len(received) == 1                 # exactly one hit published on the topic
+    assert len(received) == 1  # exactly one hit published on the topic
     det = received[0]
     assert det.radar_id == "radar1"
     assert det.timestamp == 1.0
-    assert det.position[0] > 2500             # still well downrange (3 km, with noise)
+    assert det.position[0] > 2500  # still well downrange (3 km, with noise)
 
 
 def test_drone_closes_in_over_successive_scans() -> None:

@@ -22,7 +22,7 @@ from stonesoup.models.measurement.linear import LinearGaussian
 from stonesoup.types.array import StateVector
 from stonesoup.types.state import State
 
-THREAT_KIND = "shahed"   # only threats are detected; interceptors are skipped
+THREAT_KIND = "shahed"  # only threats are detected; interceptors are skipped
 
 
 class RadarSensor:
@@ -37,7 +37,7 @@ class RadarSensor:
         prob_detect: float = 1.0,
         seed: int = 0,
     ) -> None:
-        np.random.seed(seed)              # Stone-Soup noise draws from numpy's global RNG
+        np.random.seed(seed)  # Stone-Soup noise draws from numpy's global RNG
         self._rng = np.random.default_rng(seed)
         self._bus = bus
         self._radar_id = radar_id

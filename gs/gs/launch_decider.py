@@ -30,7 +30,7 @@ class LaunchDecision:
 
     threat_id: str
     position: Vec3
-    interceptor_id: str | None     # assigned interceptor, or None if held
+    interceptor_id: str | None  # assigned interceptor, or None if held
     launched: bool
     reason: str
     timestamp: float
@@ -54,7 +54,7 @@ class LaunchDecider:
         self._radius2 = new_threat_radius_m**2
         self._pool = interceptor_pool
         self._on_decision = on_decision
-        self._threats: dict[str, Vec3] = {}   # threat_id -> last known position
+        self._threats: dict[str, Vec3] = {}  # threat_id -> last known position
         self._next_threat = 1
         self._launched = 0
         self.decisions: list[LaunchDecision] = []
@@ -78,7 +78,7 @@ class LaunchDecider:
     def _on_detection(self, detection: RadarDetection) -> None:
         matched = self._match(detection.position)
         if matched is not None:
-            self._threats[matched] = detection.position   # track update, not new
+            self._threats[matched] = detection.position  # track update, not new
             return
 
         threat_id = f"T{self._next_threat}"

@@ -85,6 +85,67 @@
     </model>
 
     <!-- ================================================================
+         LAUNCH PEDESTALS — visual-only plinths under each interceptor.
+         Static, no collision (interceptors are dynamic and spawn at z=0.2;
+         a collision pad would interpenetrate at spawn and blow up physics).
+         One per interceptor, matching their (x, y): (480, 430/480/530).
+    ================================================================ -->
+    <model name="pedestal_1">
+      <static>true</static>
+      <pose>480 430 0 0 0 0</pose>
+      <link name="link">
+        <!-- wide base disc -->
+        <visual name="base">
+          <pose>0 0 0.03 0 0 0</pose>
+          <geometry><cylinder><radius>0.65</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.18 0.18 0.20 1</ambient><diffuse>0.25 0.25 0.28 1</diffuse></material>
+        </visual>
+        <!-- column: top at z=0.12, just below the drone bottom (z=0.13) -->
+        <visual name="column">
+          <pose>0 0 0.07 0 0 0</pose>
+          <geometry><cylinder><radius>0.40</radius><length>0.10</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.40 0.40 0.45 1</diffuse><specular>0.2 0.2 0.2 1</specular></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="pedestal_2">
+      <static>true</static>
+      <pose>480 480 0 0 0 0</pose>
+      <link name="link">
+        <visual name="base">
+          <pose>0 0 0.03 0 0 0</pose>
+          <geometry><cylinder><radius>0.65</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.18 0.18 0.20 1</ambient><diffuse>0.25 0.25 0.28 1</diffuse></material>
+        </visual>
+        <!-- column: top at z=0.12, just below the drone bottom (z=0.13) -->
+        <visual name="column">
+          <pose>0 0 0.07 0 0 0</pose>
+          <geometry><cylinder><radius>0.40</radius><length>0.10</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.40 0.40 0.45 1</diffuse><specular>0.2 0.2 0.2 1</specular></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="pedestal_3">
+      <static>true</static>
+      <pose>480 530 0 0 0 0</pose>
+      <link name="link">
+        <visual name="base">
+          <pose>0 0 0.03 0 0 0</pose>
+          <geometry><cylinder><radius>0.65</radius><length>0.06</length></cylinder></geometry>
+          <material><ambient>0.18 0.18 0.20 1</ambient><diffuse>0.25 0.25 0.28 1</diffuse></material>
+        </visual>
+        <!-- column: top at z=0.12, just below the drone bottom (z=0.13) -->
+        <visual name="column">
+          <pose>0 0 0.07 0 0 0</pose>
+          <geometry><cylinder><radius>0.40</radius><length>0.10</length></cylinder></geometry>
+          <material><ambient>0.30 0.30 0.34 1</ambient><diffuse>0.40 0.40 0.45 1</diffuse><specular>0.2 0.2 0.2 1</specular></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================================================================
          INTERCEPTORS — quadtailsitter-style VTOL, 3 kg
          Spawn at the launch-pad cluster around (480, 480) from config.
          Controlled via /interceptor_N/cmd_vel  (Twist, m/s + rad/s).
@@ -480,6 +541,86 @@
         <visual name="wing_mesh">
           <pose>0 0 0 1.5707963268 0 3.1415926536</pose>
           <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================================================================
+         DEFENDED ASSET — the target the shaheds fly at, at (500,500,0)
+         from config scenario.target_position. Static, visual-only.
+    ================================================================ -->
+    <model name="defended_asset">
+      <static>true</static>
+      <pose>500 500 0 0 0 0</pose>
+      <link name="link">
+        <!-- main building -->
+        <visual name="building">
+          <pose>0 0 6 0 0 0</pose>
+          <geometry><box><size>12 12 12</size></box></geometry>
+          <material>
+            <ambient>0.35 0.35 0.40 1</ambient>
+            <diffuse>0.45 0.45 0.52 1</diffuse>
+            <specular>0.10 0.10 0.10 1</specular>
+          </material>
+        </visual>
+        <!-- bright beacon on the roof so the asset reads at a glance -->
+        <visual name="beacon">
+          <pose>0 0 14 0 0 0</pose>
+          <geometry><cylinder><radius>1.0</radius><length>4</length></cylinder></geometry>
+          <material>
+            <ambient>0.9 0.1 0.1 1</ambient>
+            <diffuse>1.0 0.15 0.15 1</diffuse>
+            <emissive>0.6 0.0 0.0 1</emissive>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ================================================================
+         RADARS — sensing sites at config radars[].position. Static,
+         visual-only. A mast + tilted dish panel reads as a radar.
+           radar_1: (100, 100, 10)
+           radar_2: (400, 200, 10)
+    ================================================================ -->
+    <!-- ── Radar 1 ──────────────────────────────────────────────────── -->
+    <model name="radar_1">
+      <static>true</static>
+      <pose>100 100 0 0 0 0</pose>
+      <link name="link">
+        <visual name="mast">
+          <pose>0 0 5 0 0 0</pose>
+          <geometry><cylinder><radius>0.4</radius><length>10</length></cylinder></geometry>
+          <material><ambient>0.2 0.2 0.22 1</ambient><diffuse>0.3 0.3 0.33 1</diffuse></material>
+        </visual>
+        <!-- tilted dish panel at the 10 m sensor height -->
+        <visual name="dish">
+          <pose>0 0 10 0 0.6 0</pose>
+          <geometry><box><size>0.3 4 3</size></box></geometry>
+          <material>
+            <ambient>0.85 0.80 0.30 1</ambient>
+            <diffuse>0.95 0.90 0.35 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ── Radar 2 ──────────────────────────────────────────────────── -->
+    <model name="radar_2">
+      <static>true</static>
+      <pose>400 200 0 0 0 0</pose>
+      <link name="link">
+        <visual name="mast">
+          <pose>0 0 5 0 0 0</pose>
+          <geometry><cylinder><radius>0.4</radius><length>10</length></cylinder></geometry>
+          <material><ambient>0.2 0.2 0.22 1</ambient><diffuse>0.3 0.3 0.33 1</diffuse></material>
+        </visual>
+        <visual name="dish">
+          <pose>0 0 10 0 0.6 0</pose>
+          <geometry><box><size>0.3 4 3</size></box></geometry>
+          <material>
+            <ambient>0.85 0.80 0.30 1</ambient>
+            <diffuse>0.95 0.90 0.35 1</diffuse>
+          </material>
         </visual>
       </link>
     </model>

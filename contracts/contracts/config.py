@@ -4,9 +4,11 @@ Load with: ScenarioConfig.from_yaml("config/scenario_default.yaml")
 """
 
 from __future__ import annotations
+
 from typing import Literal
-from pydantic import BaseModel, model_validator
+
 import yaml
+from pydantic import BaseModel, model_validator
 
 
 class RadarConfig(BaseModel):
@@ -31,22 +33,35 @@ class InterceptorConfig(BaseModel):
     launch_position: tuple[float, float, float]
 
 
+class GuidanceConfig(BaseModel):
+    update_rate_hz: float = 10.0          # PN recompute / waypoint publish rate (FR-6.2)
+    nav_constant: float = 4.0             # PN gain N (3-5)
+    lookahead_s: float = 1.0              # carrot horizon: waypoint = speed * lookahead ahead
+
+
 class CommsConfig(BaseModel):
     publish_rate_hz: float = 5.0
     packet_loss_prob: float = 0.10        # probability a single message is dropped
     consensus_window_ms: float = 400.0    # claim-and-confirm wait window
     max_claim_rounds: int = 2             # rounds before greedy fallback
+    staleness_timeout_s: float = 1.5      # peer silent longer than this is "stale" (Q2)
 
 
-class ScenarioConfig(BaseModel):
+class ScenarioMeta(BaseModel):
+    """Top-level scenario metadata — the `scenario:` block in the YAML."""
     seed: int
     target_position: tuple[float, float, float]
     duration_max: float                   # seconds
     situation: Literal["A", "B"]
+
+
+class ScenarioConfig(BaseModel):
+    scenario: ScenarioMeta
     radars: list[RadarConfig]
     shaheds: ShahedConfig
     interceptors: InterceptorConfig
     comms: CommsConfig = CommsConfig()
+    guidance: GuidanceConfig = GuidanceConfig()
 
     @model_validator(mode="after")
     def check_counts(self) -> ScenarioConfig:
@@ -59,4 +74,9 @@ class ScenarioConfig(BaseModel):
     @classmethod
     def from_yaml(cls, path: str) -> ScenarioConfig:
         with open(path) as f:
-            return cls(**yaml.safe_load(f))
+            raw = yaml.safe_load(f)
+        # The YAML groups the scenario-level fields under a `scenario:` block
+        # (see config/scenario_default.yaml and the docs); flatten it so the
+        # flat model fields (seed, situation, ...) resolve.
+        scenario = raw.pop("scenario", {})
+        return cls(**scenario, **raw)

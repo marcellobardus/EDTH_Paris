@@ -24,6 +24,7 @@ function useMock(): boolean {
 const source: DataSource = useMock() ? mock : real
 
 export const {
+  getScenario,
   getTracks,
   getThreats,
   getAssignments,

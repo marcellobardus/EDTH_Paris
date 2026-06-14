@@ -9,6 +9,7 @@ it over HTTP — so the standalone dashboard runs on real backend data instead o
 its in-browser mock.
 
 Endpoints (must match real_api.ts exactly):
+    GET  /api/scenario                -> {defended_site, ground_station, radars[]}  (static)
     GET  /api/tracks                  -> Track[]
     GET  /api/threats                 -> {track_id, severity, eta_seconds, timestamp}[]
     GET  /api/assignments             -> {interceptor_id, track_id}[]  (live, reflects re-tasking)
@@ -196,9 +197,11 @@ class Snapshot:
             gt = self.ground_truth.get(iid)
             if st is None and gt is None:
                 return None
-            position = (st or gt or {}).get("position", [0.0, 0.0, 0.0])
+            src = st or gt or {}
+            position = src.get("position", [0.0, 0.0, 0.0])
+            velocity = src.get("velocity", [0.0, 0.0, 0.0])
             target = st.get("assigned_track_id") if st else None
-            alive = (st or gt or {}).get("alive", True)
+            alive = src.get("alive", True)
             if not alive:
                 status = "DESTROYED"
             elif target:
@@ -208,6 +211,7 @@ class Snapshot:
             return {
                 "interceptor_id": iid,
                 "position": position,
+                "velocity": velocity,
                 "target_track_id": target,
                 "alive": alive,
                 "status": status,
@@ -311,6 +315,8 @@ def _start_ros(snap: Snapshot, interceptor_count: int) -> None:
             for n in range(1, interceptor_count + 1):
                 topic = Topics.interceptor_state(f"i{n}")
                 self.create_subscription(String, topic, self._on_interceptor, 10)
+            # Reset out -> sim driver (the Reset button respawns the scenario).
+            self.reset_pub = self.create_publisher(String, Topics.RESET, 10)
             self.get_logger().info(f"viz_bridge subscribed ({interceptor_count} interceptors)")
 
         def _on_tracks(self, msg: Any) -> None:
@@ -333,6 +339,8 @@ def _start_ros(snap: Snapshot, interceptor_count: int) -> None:
 
     rclpy.init()
     node = BridgeNode()
+    global _reset_signal
+    _reset_signal = lambda: node.reset_pub.publish(String(data=""))  # noqa: E731
     try:
         rclpy.spin(node)
     finally:
@@ -347,9 +355,29 @@ def _load_config() -> ScenarioConfig:
     return ScenarioConfig.from_yaml(CONFIG_PATH)
 
 
+def _scenario_geometry(cfg: ScenarioConfig) -> dict[str, Any]:
+    """Static map geometry the frontend draws once: defended site, ground
+    station (interceptor launch point), and every radar with its range ring.
+    Sourced straight from the scenario config so the sim stays the ground truth."""
+    return {
+        "defended_site": list(cfg.scenario.target_position),
+        "ground_station": list(cfg.interceptors.launch_position),
+        "radars": [
+            {
+                "radar_id": f"r{i + 1}",
+                "position": list(r.position),
+                "range": r.range,
+                "fov_deg": r.fov_deg,
+            }
+            for i, r in enumerate(cfg.radars)
+        ],
+    }
+
+
 _cfg = _load_config()
 _snap = Snapshot(tuple(_cfg.scenario.target_position))
 _sim = SimProcesses(_cfg.interceptors.count)
+_reset_signal: Any = None  # set by _start_ros: publishes /simulation/reset to the driver
 
 
 def create_app() -> Any:
@@ -365,6 +393,10 @@ def create_app() -> Any:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/api/scenario")
+    def get_scenario() -> dict[str, Any]:
+        return _scenario_geometry(_cfg)
 
     @app.get("/api/tracks")
     def get_tracks() -> list[dict[str, Any]]:
@@ -403,11 +435,17 @@ def create_app() -> Any:
     @app.post("/api/sim/reset")
     def sim_reset() -> dict[str, Any]:
         _snap.clear()
-        if not SPAWN_SIM:
-            return {"ok": True, "reason": "snapshot cleared; sim managed externally"}
-        _sim.stop()
-        ok, reason = _sim.start()
-        return {"ok": ok, "reason": reason}
+        if SPAWN_SIM:
+            # Host mode: we own the sim subprocesses — restart them for a clean run.
+            _sim.stop()
+            ok, reason = _sim.start()
+            return {"ok": ok, "reason": reason}
+        # Docker mode: the driver runs as its own service — signal it to respawn the
+        # scenario in place (new threats, interceptors back on their pads, gz reset).
+        if _reset_signal is not None:
+            _reset_signal()
+            return {"ok": True, "reason": "reset signal sent to sim"}
+        return {"ok": True, "reason": "snapshot cleared; sim not reachable"}
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

@@ -35,6 +35,7 @@ export type InterceptorStatus =
 export interface Interceptor {
   interceptor_id: string
   position: Vec3
+  velocity?: Vec3
   status?: InterceptorStatus
   target_track_id?: string | null
   alive?: boolean
@@ -68,6 +69,21 @@ export interface CopState {
   events: EngagementEvent[]
 }
 
+/** Un radar du scénario — position fixe + portée (anneau de couverture). */
+export interface RadarSite {
+  radar_id: string
+  position: Vec3
+  range: number
+  fov_deg?: number
+}
+
+/** Géométrie statique de la carte (issue de la config sim — la source de vérité). */
+export interface ScenarioGeometry {
+  defended_site: Vec3       // site protégé (centre de la carte)
+  ground_station: Vec3      // poste de lancement des intercepteurs
+  radars: RadarSite[]
+}
+
 /** Résultat des appels de contrôle (start/stop/reset). */
 export interface ControlResult {
   ok: boolean
@@ -76,6 +92,7 @@ export interface ControlResult {
 
 /** Surface commune que mock_api et real_api doivent exposer. */
 export interface DataSource {
+  getScenario(): ScenarioGeometry | Promise<ScenarioGeometry>
   getTracks(): Track[] | Promise<Track[]>
   getThreats(): ThreatAssessment[] | Promise<ThreatAssessment[]>
   getAssignments(): Assignment[] | Promise<Assignment[]>
@@ -92,6 +109,7 @@ declare global {
     __COP_EXTERNAL?: boolean
     __COP_STATE?: CopState
     __COP_setData?: (state: CopState) => CopState
+    __COP_setScenario?: (geo: ScenarioGeometry) => void
     __COP_onControl?: {
       start?: () => void
       stop?: () => void

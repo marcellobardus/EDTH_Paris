@@ -4,13 +4,14 @@ scenario:
   duration_max: 240
   situation: B
 
+# Radars flank the defended target [500, 500] symmetrically (west / east).
 radars:
-  - position: [100, 100, 10]
+  - position: [200, 500, 10]
     range: 800
     fov_deg: 360
     noise_std: 5
-  - position: [400, 200, 10]
-    range: 600
+  - position: [800, 500, 10]
+    range: 800
     fov_deg: 360
     noise_std: 8
 

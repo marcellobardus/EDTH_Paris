@@ -110,6 +110,7 @@ services:
     image: edth-viz:latest        # reuses the viz image (built by the `viz` service)
     depends_on: [viz]
     network_mode: host
+    ipc: host                   # share /dev/shm so Fast DDS delivers cross-container samples (else the bridge sees none)
     command: ["python3", "-m", "viz.bridge"]
     environment:
       - VIZ_SPAWN_SIM=0

@@ -261,80 +261,13 @@
         <axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
       </joint>
 
-      <plugin filename="gz-sim-multicopter-motor-model-system"
-              name="gz::sim::systems::MulticopterMotorModel">
-        <robotNamespace>interceptor_1</robotNamespace>
-        <jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName>
-        <turningDirection>ccw</turningDirection>
-        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
-        <maxRotVelocity>1500.0</maxRotVelocity>
-        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
-        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber>
-        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
-        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
-        <motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic>
-        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
-      </plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system"
-              name="gz::sim::systems::MulticopterMotorModel">
-        <robotNamespace>interceptor_1</robotNamespace>
-        <jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName>
-        <turningDirection>ccw</turningDirection>
-        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
-        <maxRotVelocity>1500.0</maxRotVelocity>
-        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
-        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber>
-        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
-        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
-        <motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic>
-        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
-      </plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system"
-              name="gz::sim::systems::MulticopterMotorModel">
-        <robotNamespace>interceptor_1</robotNamespace>
-        <jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName>
-        <turningDirection>cw</turningDirection>
-        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
-        <maxRotVelocity>1500.0</maxRotVelocity>
-        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
-        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber>
-        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
-        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
-        <motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic>
-        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
-      </plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system"
-              name="gz::sim::systems::MulticopterMotorModel">
-        <robotNamespace>interceptor_1</robotNamespace>
-        <jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName>
-        <turningDirection>cw</turningDirection>
-        <timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown>
-        <maxRotVelocity>1500.0</maxRotVelocity>
-        <motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant>
-        <commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber>
-        <rotorDragCoefficient>8.06428e-05</rotorDragCoefficient>
-        <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
-        <motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic>
-        <rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim>
-      </plugin>
-
-      <plugin filename="gz-sim-multicopter-control-system"
-              name="gz::sim::systems::MulticopterVelocityControl">
-        <robotNamespace>interceptor_1</robotNamespace>
-        <commandSubTopic>cmd_vel</commandSubTopic>
-        <enableSubTopic>enable</enableSubTopic>
-        <comLinkName>base_link</comLinkName>
-        <velocityGain>2.7 2.7 2.7</velocityGain>
-        <attitudeGain>2 3 0.15</attitudeGain>
-        <angularRateGain>0.4 0.52 0.18</angularRateGain>
-        <maxLinearAcceleration>10 10 6</maxLinearAcceleration>
-        <maximumLinearVelocity>13 13 8</maximumLinearVelocity>
-        <rotorConfiguration>
-          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-        </rotorConfiguration>
+      <!-- Velocity actuator: physics applies the driver's body-frame cmd_vel
+           directly to the rigid body (the multicopter thrust controller was
+           unstable + non-deterministic across gz versions). Continuous physical
+           motion (collisions, inertia), PN-guided — not teleport. -->
+      <plugin filename="gz-sim-velocity-control-system"
+              name="gz::sim::systems::VelocityControl">
+        <topic>/interceptor_1/cmd_vel</topic>
       </plugin>
 
       <plugin filename="gz-sim-odometry-publisher-system"
@@ -379,24 +312,9 @@
       <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_2</robotNamespace><jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
 
-      <plugin filename="gz-sim-multicopter-control-system" name="gz::sim::systems::MulticopterVelocityControl">
-        <robotNamespace>interceptor_2</robotNamespace>
-        <commandSubTopic>cmd_vel</commandSubTopic><enableSubTopic>enable</enableSubTopic>
-        <comLinkName>base_link</comLinkName>
-        <velocityGain>2.7 2.7 2.7</velocityGain><attitudeGain>2 3 0.15</attitudeGain>
-        <angularRateGain>0.4 0.52 0.18</angularRateGain><maxLinearAcceleration>10 10 6</maxLinearAcceleration>
-        <maximumLinearVelocity>13 13 8</maximumLinearVelocity>
-        <rotorConfiguration>
-          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-        </rotorConfiguration>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/interceptor_2/cmd_vel</topic>
       </plugin>
       <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher"><odomTopic>odometry</odomTopic><robotBaseFrame>base_link</robotBaseFrame></plugin>
 
@@ -436,24 +354,9 @@
       <link name="rotor_3"><pose>-0.22 -0.30 0.08 0 0 0</pose><inertial><mass>0.025</mass><inertia><ixx>1.0245e-04</ixx><ixy>0</ixy><ixz>0</ixz><iyy>1.0245e-04</iyy><iyz>0</iyz><izz>2.048e-04</izz></inertia></inertial><collision name="col"><geometry><cylinder><length>0.005</length><radius>0.128</radius></cylinder></geometry></collision><visual name="vis"><geometry><mesh><uri>model://quadtailsitter/meshes/iris_prop_cw.dae</uri><scale>1 1 1</scale></mesh></geometry></visual></link>
       <joint name="rotor_3_joint" type="revolute"><parent>base_link</parent><child>rotor_3</child><axis><xyz>0 0 1</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis></joint>
 
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_0_joint</jointName><linkName>rotor_0</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>0</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/0</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_1_joint</jointName><linkName>rotor_1</linkName><turningDirection>ccw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>1</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/1</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_2_joint</jointName><linkName>rotor_2</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>2</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/2</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
-      <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel"><robotNamespace>interceptor_3</robotNamespace><jointName>rotor_3_joint</jointName><linkName>rotor_3</linkName><turningDirection>cw</turningDirection><timeConstantUp>0.0125</timeConstantUp><timeConstantDown>0.025</timeConstantDown><maxRotVelocity>1500.0</maxRotVelocity><motorConstant>1.5e-05</motorConstant><momentConstant>0.016</momentConstant><commandSubTopic>command/motor_speed</commandSubTopic><motorNumber>3</motorNumber><rotorDragCoefficient>8.06428e-05</rotorDragCoefficient><rollingMomentCoefficient>1e-06</rollingMomentCoefficient><motorSpeedPubTopic>motor_speed/3</motorSpeedPubTopic><rotorVelocitySlowdownSim>10</rotorVelocitySlowdownSim></plugin>
 
-      <plugin filename="gz-sim-multicopter-control-system" name="gz::sim::systems::MulticopterVelocityControl">
-        <robotNamespace>interceptor_3</robotNamespace>
-        <commandSubTopic>cmd_vel</commandSubTopic><enableSubTopic>enable</enableSubTopic>
-        <comLinkName>base_link</comLinkName>
-        <velocityGain>2.7 2.7 2.7</velocityGain><attitudeGain>2 3 0.15</attitudeGain>
-        <angularRateGain>0.4 0.52 0.18</angularRateGain><maxLinearAcceleration>10 10 6</maxLinearAcceleration>
-        <maximumLinearVelocity>13 13 8</maximumLinearVelocity>
-        <rotorConfiguration>
-          <rotor><jointName>rotor_0_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_1_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>1</direction></rotor>
-          <rotor><jointName>rotor_2_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-          <rotor><jointName>rotor_3_joint</jointName><forceConstant>1.5e-05</forceConstant><momentConstant>0.016</momentConstant><direction>-1</direction></rotor>
-        </rotorConfiguration>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/interceptor_3/cmd_vel</topic>
       </plugin>
       <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher"><odomTopic>odometry</odomTopic><robotBaseFrame>base_link</robotBaseFrame></plugin>
 
@@ -474,7 +377,6 @@
 
     <!-- ── Shahed 1 (northeast, heading SW toward target) ────────────── -->
     <model name="shahed_1">
-      <static>true</static>
       <pose>700 700 80 0 0 -2.356</pose>
 
       <link name="base_link">
@@ -501,11 +403,14 @@
           </geometry>
         </visual>
       </link>
+          <!-- Constant-velocity straight-line flight via physics (driver commands a fixed cmd_vel). -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/shahed_1/cmd_vel</topic>
+      </plugin>
     </model>
 
     <!-- ── Shahed 2 (northwest, heading E toward target) ─────────────── -->
     <model name="shahed_2">
-      <static>true</static>
       <pose>-700 700 100 0 0 -0.165</pose>
 
       <link name="base_link">
@@ -516,11 +421,14 @@
           <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
         </visual>
       </link>
+          <!-- Constant-velocity straight-line flight via physics (driver commands a fixed cmd_vel). -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/shahed_2/cmd_vel</topic>
+      </plugin>
     </model>
 
     <!-- ── Shahed 3 (east-southeast, heading NW toward target) ───────── -->
     <model name="shahed_3">
-      <static>true</static>
       <pose>900 -300 90 0 0 2.034</pose>
 
       <link name="base_link">
@@ -531,11 +439,14 @@
           <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
         </visual>
       </link>
+          <!-- Constant-velocity straight-line flight via physics (driver commands a fixed cmd_vel). -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/shahed_3/cmd_vel</topic>
+      </plugin>
     </model>
 
     <!-- ── Shahed 4 (south-southwest, heading NNE toward target) ─────── -->
     <model name="shahed_4">
-      <static>true</static>
       <pose>-200 -950 110 0 0 1.120</pose>
 
       <link name="base_link">
@@ -546,6 +457,10 @@
           <geometry><mesh><scale>0.001 0.001 0.001</scale><uri>model://standard_vtol/meshes/x8_wing.dae</uri></mesh></geometry>
         </visual>
       </link>
+          <!-- Constant-velocity straight-line flight via physics (driver commands a fixed cmd_vel). -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/shahed_4/cmd_vel</topic>
+      </plugin>
     </model>
 
     <!-- ================================================================
@@ -582,13 +497,13 @@
     <!-- ================================================================
          RADARS — sensing sites at config radars[].position. Static,
          visual-only. A mast + tilted dish panel reads as a radar.
-           radar_1: (100, 100, 10)
-           radar_2: (400, 200, 10)
+           radar_1: (200, 500, 10)
+           radar_2: (800, 500, 10)
     ================================================================ -->
     <!-- ── Radar 1 ──────────────────────────────────────────────────── -->
     <model name="radar_1">
       <static>true</static>
-      <pose>100 100 0 0 0 0</pose>
+      <pose>200 500 0 0 0 0</pose>
       <link name="link">
         <visual name="mast">
           <pose>0 0 5 0 0 0</pose>
@@ -610,7 +525,7 @@
     <!-- ── Radar 2 ──────────────────────────────────────────────────── -->
     <model name="radar_2">
       <static>true</static>
-      <pose>400 200 0 0 0 0</pose>
+      <pose>800 500 0 0 0 0</pose>
       <link name="link">
         <visual name="mast">
           <pose>0 0 5 0 0 0</pose>

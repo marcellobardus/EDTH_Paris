@@ -19,6 +19,9 @@ class Topics:
     GROUND_TRUTH = "/simulation/ground_truth"  # GroundTruth
     ENGAGEMENT = "/simulation/engagement"  # EngagementEvent
 
+    # Visualization → Simulation (control)
+    RESET = "/simulation/reset"  # std_msgs/String (empty) — respawn the scenario
+
     # Interceptor peer-to-peer (parametric — use helpers below)
     @staticmethod
     def interceptor_state(interceptor_id: str) -> str:

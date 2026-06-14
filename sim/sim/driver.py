@@ -128,20 +128,35 @@ def _rotate_toward(heading: Vec3, desired: Vec3, max_angle: float) -> Vec3:
 
 
 class Shahed:
-    """A threat flying a straight, constant-speed course at the target."""
+    """A threat flying a straight, constant-speed course at the target.
+
+    Flown by Gazebo physics (constant cmd_vel into VelocityControl), exactly like
+    the interceptors: `pos`/`yaw` are refreshed each tick from the gz world pose,
+    so gz is the kinematic authority and the dashboard (which reads this same
+    ground-truth) stays pixel-synced with the 3D view.
+    """
 
     def __init__(self, sid: str, pos: Vec3, speed: float, target: Vec3) -> None:
         self.id = sid
         self.pos = pos
-        self.vel = _scale(_unit(_sub(target, pos)), speed)
+        self.vel = _scale(_unit(_sub(target, pos)), speed)  # constant world velocity
+        self.yaw = math.atan2(self.vel[1], self.vel[0])  # refreshed from gz pose
         self.alive = True
         self.reached = False  # True once it leaked through to the target
         self._target = target
 
-    def step(self, dt: float) -> None:
+    def body_velocity_command(self) -> Vec3:
+        """Constant world velocity rotated into the current body frame (cmd_vel is
+        body-frame). Using the live yaw keeps the world track straight even if the
+        model's heading drifts."""
+        wx, wy, wz = self.vel
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        return (c * wx + s * wy, -s * wx + c * wy, wz)
+
+    def check_reached(self) -> None:
+        """gz owns the position; flag a leak once it arrives at the target."""
         if not self.alive:
             return
-        self.pos = _add(self.pos, _scale(self.vel, dt))
         if _dist(self.pos, self._target) < TARGET_REACH_RADIUS_M:
             self.alive = False
             self.reached = True
@@ -247,7 +262,7 @@ class SimWorld:
         leaked: list[str] = []
         for sh in self.shaheds:
             was_alive = sh.alive
-            sh.step(dt)
+            sh.check_reached()  # gz flies it; we only watch for the leak
             if was_alive and sh.reached:
                 leaked.append(sh.id)
 
@@ -360,10 +375,19 @@ GZ_WORLD = "intercept_scenario"
 # interceptor homes fully in 3D on the waypoint (which sits at the target's
 # altitude), so it can actually close the vertical gap to a shahed.
 CRUISE_ALTITUDE_M = 20.0
+# Shaheds are placed at their (randomised) spawn for this long via set_pose so the
+# gz model lands on the Python spawn point; after this they fly purely on physics
+# (a constant cmd_vel into gz VelocityControl). Brief — just covers gz model spawn.
+SHAHED_PLACEMENT_S = 0.6
 
 
 def _yaw_from_quat(w: float, x: float, y: float, z: float) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _quat_from_yaw(yaw: float) -> tuple[float, float, float, float]:
+    """(w, x, y, z) for a yaw-only rotation about +Z."""
+    return (math.cos(yaw * 0.5), 0.0, 0.0, math.sin(yaw * 0.5))
 
 
 class GzBridge:
@@ -386,15 +410,33 @@ class GzBridge:
         # i{n} -> interceptor_{n} (and reverse, by gz model name).
         self._gz_name = {f"i{n}": f"interceptor_{n}" for n in range(1, len(world.interceptors) + 1)}
         self._id_by_gz = {v: k for k, v in self._gz_name.items()}
-        # t{n} -> shahed_{n}.
+        # t{n} -> shahed_{n} (and reverse).
         self._shahed_gz = {f"t{n}": f"shahed_{n}" for n in range(1, len(world.shaheds) + 1)}
+        self._shahed_id_by_gz = {v: k for k, v in self._shahed_gz.items()}
 
-        self._enable_pub = {}
+        # Velocity command per interceptor (consumed by the gz VelocityControl
+        # system on each model — no enable handshake, unlike the old multicopter
+        # controller this replaced).
         self._cmd_pub = {}
         for itc in world.interceptors:
             ns = self._gz_name[itc.id]
-            self._enable_pub[itc.id] = self._node.advertise(f"/{ns}/enable", Boolean)
             self._cmd_pub[itc.id] = self._node.advertise(f"/{ns}/cmd_vel", Twist)
+
+        # Shaheds fly the same way now (physics, not teleport): a constant cmd_vel
+        # into VelocityControl. Stash each one's spawn pose so we can seat the gz
+        # model on its randomised spawn before handing it to physics.
+        self._shahed_cmd_pub = {}
+        self._shahed_spawn: dict[str, Vec3] = {}
+        self._shahed_spawn_yaw: dict[str, float] = {}
+        for sh in world.shaheds:
+            ns = self._shahed_gz[sh.id]
+            self._shahed_cmd_pub[sh.id] = self._node.advertise(f"/{ns}/cmd_vel", Twist)
+            self._shahed_spawn[sh.id] = sh.pos
+            self._shahed_spawn_yaw[sh.id] = sh.yaw
+
+        # Captured the first time each interceptor's gz pose is seen, so a reset can
+        # seat it back on its launch pad (the shared launch_position would stack them).
+        self._itc_spawn: dict[str, tuple[Vec3, float]] = {}
 
         # World pose feed — refreshes interceptor truth in place.
         self._node.subscribe(Pose_V, f"/world/{GZ_WORLD}/pose/info", self._on_pose_v)
@@ -403,42 +445,55 @@ class GzBridge:
         # the physics step. One Pose_V call keeps the tick cheap.
         self._set_pose_vec_srv = f"/world/{GZ_WORLD}/set_pose_vector"
 
-    # -- interceptor truth in <- gz ----------------------------------------
+    # -- truth in <- gz (interceptors + shaheds are both gz-flown) ----------
     def _on_pose_v(self, msg: Any) -> None:
-        by_id = {itc.id: itc for itc in self._world.interceptors}
+        itc_by_id = {itc.id: itc for itc in self._world.interceptors}
+        sh_by_id = {sh.id: sh for sh in self._world.shaheds}
         for p in msg.pose:
-            iid = self._id_by_gz.get(p.name)
-            if iid is None:
+            body = itc_by_id.get(self._id_by_gz.get(p.name, "")) or sh_by_id.get(
+                self._shahed_id_by_gz.get(p.name, "")
+            )
+            if body is None:
                 continue
-            itc = by_id.get(iid)
-            if itc is None:
-                continue
-            pos = p.position
-            itc.pos = (pos.x, pos.y, pos.z)
-            o = p.orientation
-            itc.yaw = _yaw_from_quat(o.w, o.x, o.y, o.z)
+            pos, o = p.position, p.orientation
+            body.pos = (pos.x, pos.y, pos.z)
+            body.yaw = _yaw_from_quat(o.w, o.x, o.y, o.z)
+            if p.name in self._id_by_gz and body.id not in self._itc_spawn:
+                self._itc_spawn[body.id] = (body.pos, body.yaw)  # launch pad pose
 
     # -- interceptor control out -> gz -------------------------------------
-    def arm_all(self) -> None:
-        b = self._Boolean()
-        b.data = True
-        for pub in self._enable_pub.values():
-            pub.publish(b)
-
     def publish_cmd_vel(self) -> None:
         for itc in self._world.interceptors:
-            if not itc.alive:
-                continue
-            # Hold cruise altitude if we're still below it and have somewhere to go.
-            bx, by, bz = itc.body_velocity_command()
-            if itc.waypoint is not None and itc.pos[2] < CRUISE_ALTITUDE_M - 5.0:
-                bz = max(bz, 6.0)  # prioritise climbing out before chasing
             t = self._Twist()
-            t.linear.x, t.linear.y, t.linear.z = bx, by, bz
+            if itc.alive:
+                # Hold cruise altitude if we're still below it and have somewhere to go.
+                bx, by, bz = itc.body_velocity_command()
+                if itc.waypoint is not None and itc.pos[2] < CRUISE_ALTITUDE_M - 5.0:
+                    bz = max(bz, 6.0)  # prioritise climbing out before chasing
+                t.linear.x, t.linear.y, t.linear.z = bx, by, bz
+            # Expended interceptor: keep commanding zero velocity so VelocityControl
+            # freezes it in place (otherwise it coasts on the last command forever).
             self._cmd_pub[itc.id].publish(t)
 
-    # -- shahed teleport out -> gz -----------------------------------------
-    def teleport_shaheds(self) -> None:
+    # -- shahed control out -> gz ------------------------------------------
+    def publish_shahed_cmd_vel(self) -> None:
+        """Constant velocity command → VelocityControl flies each shahed straight.
+        The body-frame command uses the live gz yaw, so the world track is straight
+        regardless of the model's heading."""
+        for sh in self._world.shaheds:
+            t = self._Twist()
+            if sh.alive:
+                bx, by, bz = sh.body_velocity_command()
+                t.linear.x, t.linear.y, t.linear.z = bx, by, bz
+            # Dead shahed: zero velocity freezes it (don't coast past the kill point).
+            self._shahed_cmd_pub[sh.id].publish(t)
+
+    def place_shaheds(self) -> None:
+        """Seat each shahed on its randomised spawn (oriented along its velocity) for
+        a brief window so gz instantiates the model in the right place; after that,
+        physics flies it entirely (constant cmd_vel) and gz owns its pose."""
+        if self._world.t > SHAHED_PLACEMENT_S:
+            return
         req = self._Pose_V()
         any_alive = False
         for sh in self._world.shaheds:
@@ -446,12 +501,50 @@ class GzBridge:
             if gz_name is None or not sh.alive:
                 continue
             any_alive = True
+            sx, sy, sz = self._shahed_spawn[sh.id]
             p = req.pose.add()
             p.name = gz_name
-            p.position.x, p.position.y, p.position.z = sh.pos
-            p.orientation.w = 1.0
+            p.position.x, p.position.y, p.position.z = sx, sy, sz
+            qw, qx, qy, qz = _quat_from_yaw(self._shahed_spawn_yaw[sh.id])
+            p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z = qw, qx, qy, qz
         if not any_alive:
             return
+        try:
+            self._node.request(self._set_pose_vec_srv, req, self._Pose_V, self._Boolean, 50)
+        except Exception:
+            pass
+
+    # -- reset --------------------------------------------------------------
+    def rebind(self, world: SimWorld) -> None:
+        """Point the bridge at a fresh world (after a reset) and rebuild the shahed
+        spawn caches. Publisher handles and interceptor launch pads are reused —
+        same models, same ids."""
+        self._world = world
+        self._shahed_spawn = {sh.id: sh.pos for sh in world.shaheds}
+        self._shahed_spawn_yaw = {sh.id: sh.yaw for sh in world.shaheds}
+
+    def reset_bodies(self) -> None:
+        """Snap every model back to spawn: interceptors onto their launch pads,
+        shaheds onto their fresh spawn. place_shaheds keeps shaheds seated through
+        the new placement window; cmd_vel takes over after."""
+        req = self._Pose_V()
+        for itc in self._world.interceptors:
+            sp = self._itc_spawn.get(itc.id)
+            if sp is None:
+                continue
+            (px, py, pz), yaw = sp
+            p = req.pose.add()
+            p.name = self._gz_name[itc.id]
+            p.position.x, p.position.y, p.position.z = px, py, pz
+            qw, qx, qy, qz = _quat_from_yaw(yaw)
+            p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z = qw, qx, qy, qz
+        for sh in self._world.shaheds:
+            sx, sy, sz = self._shahed_spawn[sh.id]
+            p = req.pose.add()
+            p.name = self._shahed_gz[sh.id]
+            p.position.x, p.position.y, p.position.z = sx, sy, sz
+            qw, qx, qy, qz = _quat_from_yaw(self._shahed_spawn_yaw[sh.id])
+            p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z = qw, qx, qy, qz
         try:
             self._node.request(self._set_pose_vec_srv, req, self._Pose_V, self._Boolean, 50)
         except Exception:
@@ -494,6 +587,9 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
                 topic = Topics.waypoint_command(itc.id)
                 self.create_subscription(String, topic, self._make_waypoint_cb(itc.id), 10)
 
+            # dashboard --reset--> driver (respawn the scenario)
+            self.create_subscription(String, Topics.RESET, self._on_reset, 10)
+
             # driver --> bus
             self._gt_pub = self.create_publisher(String, Topics.GROUND_TRUTH, 10)
             self._radar_pub = self.create_publisher(String, Topics.RADAR_DETECTIONS, 10)
@@ -505,12 +601,12 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
             self.create_timer(1.0 / PHYS_HZ, self._step)
             self.create_timer(1.0 / GROUND_TRUTH_HZ, self._pub_ground_truth)
             self.create_timer(1.0 / RADAR_HZ, self._pub_radar)
-            # gz interceptor control at the ground-truth rate; keep arming so a
-            # late-discovering velocity controller still latches enable=true.
+            # Push velocity commands (interceptors + shaheds) to gz VelocityControl
+            # at the ground-truth rate — cheap non-blocking publishes.
             self.create_timer(1.0 / GROUND_TRUTH_HZ, self._drive_gz)
-            # Shahed teleport on its own slower timer: the call is blocking, so we
-            # keep it off the hot control path.
-            self.create_timer(0.1, self._gz.teleport_shaheds)
+            # Initial shahed placement (blocking set_pose) on its own slower timer,
+            # off the hot path; it self-disables after the placement window.
+            self.create_timer(0.1, self._gz.place_shaheds)
             self._assign_timer: Any = None
             if emit_gs:
                 self.create_timer(1.0 / TRACK_HZ, self._pub_tracks)
@@ -541,11 +637,10 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
                 self.get_logger().info(f"LEAK {sid} reached target @ t={self.world.t:.1f}s")
 
         def _drive_gz(self) -> None:
-            # Interceptor poses are refreshed in place by the pose/info callback;
-            # here we push control out: keep them armed and command velocity
-            # toward the waypoint. (Shahed teleport is on its own timer.)
-            self._gz.arm_all()
+            # Push velocity commands to gz VelocityControl: interceptors home on
+            # their waypoints, shaheds fly a constant-velocity straight line.
             self._gz.publish_cmd_vel()
+            self._gz.publish_shahed_cmd_vel()
 
         def _pub_ground_truth(self) -> None:
             self._gt_pub.publish(String(data=_encode_list(self.world.ground_truth())))
@@ -558,15 +653,29 @@ def _run(cfg: ScenarioConfig, seed: int, emit_gs: bool, kill_radius: float) -> N
         def _pub_tracks(self) -> None:
             self._track_pub.publish(String(data=_encode_list(self.world.tracks())))
 
+        def _publish_assignments(self) -> None:
+            if not self._emit_gs:
+                return
+            assignments = self.world.initial_assignments()
+            self._assign_pub.publish(String(data=_encode_list(assignments)))
+            for a in assignments:
+                self.get_logger().info(f"ASSIGN {a.interceptor_id} -> {a.track_id}")
+
         def _pub_assignments_once(self) -> None:
             # Fire once: cancel our own timer, then publish the latched launch plan.
             if self._assign_timer is not None:
                 self.destroy_timer(self._assign_timer)
                 self._assign_timer = None
-            assignments = self.world.initial_assignments()
-            self._assign_pub.publish(String(data=_encode_list(assignments)))
-            for a in assignments:
-                self.get_logger().info(f"ASSIGN {a.interceptor_id} -> {a.track_id}")
+            self._publish_assignments()
+
+        def _on_reset(self, _msg: Any) -> None:
+            # Respawn a fresh scenario (same seed) in place: new threats, interceptors
+            # back on their pads, clock + kills cleared, launch plan re-issued.
+            self.world = SimWorld(cfg, seed, kill_radius)
+            self._gz.rebind(self.world)
+            self._gz.reset_bodies()
+            self._publish_assignments()
+            self.get_logger().info("RESET: scenario respawned")
 
     rclpy.init()
     node = SimDriverNode()

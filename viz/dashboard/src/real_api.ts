@@ -4,7 +4,7 @@
 
 import type {
   Track, ThreatAssessment, Assignment, Interceptor,
-  EngagementEvent, ControlResult,
+  EngagementEvent, ControlResult, ScenarioGeometry,
 } from './types'
 
 const BASE = '/api'
@@ -21,6 +21,7 @@ async function _post<T>(path: string): Promise<T> {
   return r.json() as Promise<T>
 }
 
+export const getScenario = () => _get<ScenarioGeometry>('/scenario')
 export const getTracks = () => _get<Track[]>('/tracks')
 export const getThreats = () => _get<ThreatAssessment[]>('/threats')
 export const getAssignments = () => _get<Assignment[]>('/assignments')

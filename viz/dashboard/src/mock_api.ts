@@ -4,7 +4,7 @@
 
 import type {
   Track, ThreatAssessment, Assignment, Interceptor,
-  EngagementEvent, ControlResult,
+  EngagementEvent, ControlResult, ScenarioGeometry,
 } from './types'
 
 // ── Config scénario (mirrors scenario_default.yaml) ────────────────────────────
@@ -139,7 +139,21 @@ function _scheduleEngagement(): void {
   }, ENGAGEMENT_INTERVAL + Math.random() * 5000)
 }
 
+// Radars : positions fixes (mirror scenario_default.yaml → radars[]).
+const RADARS: ScenarioGeometry['radars'] = [
+  { radar_id: 'r1', position: [200, 500, 10], range: 800, fov_deg: 360 },
+  { radar_id: 'r2', position: [800, 500, 10], range: 800, fov_deg: 360 },
+]
+
 // ── API publique (DataSource) ────────────────────────────────────────────────────
+
+export function getScenario(): ScenarioGeometry {
+  return {
+    defended_site: [...TARGET] as [number, number, number],
+    ground_station: [...GROUND_STATION] as [number, number, number],
+    radars: RADARS.map(r => ({ ...r, position: [...r.position] as [number, number, number] })),
+  }
+}
 
 export function getTracks(): Track[] {
   return _shaheds.map(s => ({

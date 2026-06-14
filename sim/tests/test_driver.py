@@ -38,37 +38,25 @@ def _cfg(n_interceptors: int = 2, n_shaheds: int = 2) -> ScenarioConfig:
     )
 
 
-def _angle(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(x * x for x in b))
-    cos = sum(a[i] * b[i] for i in range(3)) / (na * nb)
-    return math.acos(max(-1.0, min(1.0, cos)))
-
-
 def test_interceptor_homes_toward_waypoint() -> None:
+    # Interceptors are flown by gz VelocityControl: the driver pushes
+    # desired_world_velocity() out as cmd_vel and physics flies the body there.
     itc = Interceptor("i1", (0.0, 0.0, 0.0), speed=40.0, max_turn_rate_deg_s=30.0)
     itc.waypoint = (1000.0, 0.0, 0.0)
-    for _ in range(50):  # 1 s at 50 Hz
-        itc.step(1.0 / 50.0)
-    # Travels ~speed * 1 s = 40 m straight down +x.
-    assert itc.pos[0] > 35.0
-    assert abs(itc.pos[1]) < 1.0 and abs(itc.pos[2]) < 1.0
-    assert math.isclose(math.sqrt(sum(v * v for v in itc.vel)), 40.0, rel_tol=1e-6)
-
-
-def test_interceptor_respects_turn_rate() -> None:
-    itc = Interceptor("i1", (0.0, 0.0, 0.0), speed=40.0, max_turn_rate_deg_s=30.0)
-    itc.vel = (40.0, 0.0, 0.0)  # already cruising +x
-    itc.waypoint = (0.0, 1000.0, 0.0)  # demand a 90° left turn
-    itc.step(1.0 / 50.0)
-    turned = math.degrees(_angle((40.0, 0.0, 0.0), itc.vel))
-    assert 0.0 < turned <= 30.0 / 50.0 + 1e-6  # <= max_turn_rate * dt
+    v = itc.desired_world_velocity()
+    # Points straight at the waypoint (+x) at cruise speed.
+    assert v[0] > 0 and abs(v[1]) < 1e-6 and abs(v[2]) < 1e-6
+    assert math.isclose(math.sqrt(sum(c * c for c in v)), 40.0, rel_tol=1e-6)
 
 
 def test_shahed_reaches_target_and_leaks() -> None:
-    sh = Shahed("t1", (505.0, 500.0, 0.0), speed=20.0, target=(500.0, 500.0, 0.0))
-    for _ in range(10):
-        sh.step(0.1)
+    # gz flies the shahed (its pose is refreshed from the world); check_reached()
+    # only watches for arrival at the defended target.
+    sh = Shahed("t1", (560.0, 500.0, 0.0), speed=20.0, target=(500.0, 500.0, 0.0))
+    sh.check_reached()
+    assert sh.alive and not sh.reached  # still inbound
+    sh.pos = (500.5, 500.0, 0.0)  # gz has flown it onto the target
+    sh.check_reached()
     assert not sh.alive and sh.reached
 
 

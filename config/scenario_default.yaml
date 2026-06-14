@@ -25,7 +25,7 @@ interceptors:
   speed_mps: 13
   max_turn_rate_deg_s: 30
   range_m: 700
-  launch_position: [480, 480, 0]
+  launch_position: [480, 480, 1.0]
 
 comms:
   publish_rate_hz: 5

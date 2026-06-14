@@ -2,7 +2,7 @@
 
 # Build everything (base must come first — others depend on it)
 build: build-base
-	docker compose build sim gzweb gs agent viz
+	docker compose build sim gzweb gs agent1 agent2 agent3 viz
 
 build-base:
 	docker compose build base

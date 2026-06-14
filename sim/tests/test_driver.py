@@ -45,24 +45,26 @@ def _angle(a: tuple[float, float, float], b: tuple[float, float, float]) -> floa
     return math.acos(max(-1.0, min(1.0, cos)))
 
 
-def test_interceptor_homes_toward_waypoint() -> None:
+# NB: the interceptor no longer integrates its own motion — gz physics is the
+# kinematic authority (see commit 6e5342a). These exercise the pure command
+# methods the driver feeds to cmd_vel; the body-frame rotation itself is pinned
+# in test_flight_regression.py.
+
+
+def test_interceptor_world_velocity_homes_toward_waypoint() -> None:
     itc = Interceptor("i1", (0.0, 0.0, 0.0), speed=40.0, max_turn_rate_deg_s=30.0)
     itc.waypoint = (1000.0, 0.0, 0.0)
-    for _ in range(50):  # 1 s at 50 Hz
-        itc.step(1.0 / 50.0)
-    # Travels ~speed * 1 s = 40 m straight down +x.
-    assert itc.pos[0] > 35.0
-    assert abs(itc.pos[1]) < 1.0 and abs(itc.pos[2]) < 1.0
-    assert math.isclose(math.sqrt(sum(v * v for v in itc.vel)), 40.0, rel_tol=1e-6)
+    vx, vy, vz = itc.desired_world_velocity()
+    # Points straight down +x, capped at cruise speed.
+    assert vx > 0.0 and abs(vy) < 1e-9 and abs(vz) < 1e-9
+    assert math.isclose(math.sqrt(vx * vx + vy * vy + vz * vz), 40.0, rel_tol=1e-6)
 
 
-def test_interceptor_respects_turn_rate() -> None:
+def test_interceptor_eases_off_near_waypoint() -> None:
     itc = Interceptor("i1", (0.0, 0.0, 0.0), speed=40.0, max_turn_rate_deg_s=30.0)
-    itc.vel = (40.0, 0.0, 0.0)  # already cruising +x
-    itc.waypoint = (0.0, 1000.0, 0.0)  # demand a 90° left turn
-    itc.step(1.0 / 50.0)
-    turned = math.degrees(_angle((40.0, 0.0, 0.0), itc.vel))
-    assert 0.0 < turned <= 30.0 / 50.0 + 1e-6  # <= max_turn_rate * dt
+    itc.waypoint = (3.0, 0.0, 0.0)  # closer than one second of travel
+    speed = math.sqrt(sum(v * v for v in itc.desired_world_velocity()))
+    assert speed <= 3.0 + 1e-9  # don't overshoot the carrot
 
 
 def test_shahed_reaches_target_and_leaks() -> None:

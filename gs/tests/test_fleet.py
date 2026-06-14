@@ -8,6 +8,7 @@ from contracts.config import (
     InterceptorConfig,
     RadarConfig,
     ScenarioConfig,
+    ScenarioMeta,
     ShahedConfig,
 )
 from contracts.messages import EngagementEvent, InterceptorState
@@ -16,10 +17,12 @@ from gs.fleet import Interceptor, InterceptorFleet, Status
 
 def _cfg(count: int = 4, launch=(0.0, 0.0, 0.0), speed=300.0, rng=8000.0) -> ScenarioConfig:
     return ScenarioConfig(
-        seed=0,
-        target_position=(0.0, 0.0, 0.0),
-        duration_max=120.0,
-        situation="B",
+        scenario=ScenarioMeta(
+            seed=0,
+            target_position=(0.0, 0.0, 0.0),
+            duration_max=120.0,
+            situation="B",
+        ),
         radars=[RadarConfig(position=(0.0, 0.0, 0.0), range=10000.0, fov_deg=360.0, noise_std=5.0)],
         shaheds=ShahedConfig(
             count=1, speed_mps=(40.0, 60.0), spawn_radius=3000.0, spawn_angle_spread_deg=360.0

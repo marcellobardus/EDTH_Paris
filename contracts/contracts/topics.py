@@ -19,18 +19,12 @@ class Topics:
     GROUND_TRUTH = "/simulation/ground_truth"  # GroundTruth
     ENGAGEMENT = "/simulation/engagement"  # EngagementEvent
 
-    # Interceptor peer-to-peer (parametric — use helpers below)
+    # Interceptor peer-to-peer (parametric — use helpers below).
+    # CBAA folds everything into one channel: there is no claim/commit topic,
+    # the InterceptorState broadcast carries ownership + priority + lock.
     @staticmethod
     def interceptor_state(interceptor_id: str) -> str:
         return f"/interceptors/{interceptor_id}/state"  # InterceptorState
-
-    @staticmethod
-    def interceptor_claim(interceptor_id: str) -> str:
-        return f"/interceptors/{interceptor_id}/claim"  # Claim
-
-    @staticmethod
-    def interceptor_commit(interceptor_id: str) -> str:
-        return f"/interceptors/{interceptor_id}/commit"  # Commit
 
     # Interceptor → Simulation
     @staticmethod

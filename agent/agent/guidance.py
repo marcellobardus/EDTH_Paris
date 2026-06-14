@@ -17,6 +17,8 @@ the commanded turn (clamped to max_turn_rate), then drop the waypoint
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 Vec3 = tuple[float, float, float]
@@ -54,6 +56,44 @@ def pn_acceleration(
     if speed < _EPS:
         speed = fallback_speed
     return nav_constant * speed * np.cross(omega, _unit(R))
+
+
+def intercept_time(
+    self_pos: Vec3,
+    self_speed: float,
+    tgt_pos: Vec3,
+    tgt_vel: Vec3,
+) -> float:
+    """Lead-pursuit intercept time (seconds): the smallest t > 0 at which an
+    interceptor leaving `self_pos` at constant speed `self_speed` can meet a
+    target at `tgt_pos` moving at constant `tgt_vel`. ``inf`` if uncatchable.
+
+    Solves |Δ + v·t| = s·t for t (Δ = target − interceptor), the same quadratic
+    the GS optimizer uses, so an agent's local intercept estimate is consistent
+    with the launch assignment. Constant *nominal* speed (not current velocity)
+    keeps the priority key stable across the turn dynamics.
+    """
+    p = np.asarray(self_pos, dtype=float)
+    d = np.asarray(tgt_pos, dtype=float) - p
+    v = np.asarray(tgt_vel, dtype=float)
+    a = float(v @ v) - self_speed * self_speed
+    b = 2.0 * float(d @ v)
+    c = float(d @ d)
+
+    if c < _EPS:  # already on top of the target -> intercept now
+        return 0.0
+    if abs(a) < _EPS:  # degenerate: closing speed == target speed -> linear
+        if abs(b) < _EPS:
+            return math.inf
+        t = -c / b
+        return t if t > _EPS else math.inf
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return math.inf  # never catches it
+    sq = math.sqrt(disc)
+    roots = ((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a))
+    positives = [t for t in roots if t > _EPS]
+    return min(positives) if positives else math.inf
 
 
 def _clamp_turn(v_from: np.ndarray, v_to: np.ndarray, max_angle: float) -> np.ndarray:

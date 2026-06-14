@@ -1,21 +1,19 @@
-"""A5 tests (FR-8): claim-and-confirm re-tasking, via an in-memory mesh.
+"""A5 tests (FR-8): CBAA decentralised re-tasking, via an in-memory mesh.
 
-The FSM is pure (RetaskingProtocol talks only to AwarenessPicture /
-InterceptorLocalState and two emit callbacks), so we exercise it headless with a
-hand-wired mesh standing in for DDS — no ROS, no Docker.
+The engine is pure (RetaskingProtocol talks only to AwarenessPicture /
+InterceptorLocalState and one emit_state callback), so we exercise it headless
+with a hand-wired mesh standing in for DDS — no ROS, no Docker.
 
 Mesh model (the part that has to be faithful, or the tests lie):
-  * Claims/commits are EVENTS with one tick of latency: a message emitted while
+  * State broadcasts are EVENTS with one tick of latency: a message emitted while
     ticking step N is delivered at the start of step N+1. That is what makes the
-    ~400 ms consensus window see *overlapping* claims — both contenders are
-    already WAITING when each other's claim lands, exactly like async pub/sub.
-    Deliver instantly inside the same synchronous tick loop and you'd get a
-    spurious double-commit that the real (async) system never produces.
-  * Peer STATE is level-triggered (latest assignment wins) and is re-broadcast
-    every step — that periodic re-broadcast is the substrate reconvergence rides
-    on when a one-shot Commit is dropped.
-  * Loss is a seeded predicate over (kind, msg, dst) so packet-loss sweeps are
-    deterministic and per-link.
+    decentralised pictures briefly diverge — exactly like async pub/sub.
+  * There is only ONE message type now (InterceptorState): it carries ownership,
+    the owner's priority key, and the lock flag. No claim/commit.
+  * Loss is a seeded predicate over (msg, dst) so packet-loss sweeps are
+    deterministic and per-link. Reconvergence rides on the periodic re-broadcast
+    (heartbeat + CHANGE_REPEAT re-emits), since a dropped packet only delays a
+    decision by a cycle.
 """
 
 from __future__ import annotations
@@ -26,11 +24,13 @@ from collections.abc import Callable
 from agent.awareness import AwarenessPicture
 from agent.local_state import InterceptorLocalState
 from agent.retasking import RetaskingProtocol
-from contracts.messages import Claim, Commit, Track
+from contracts.messages import InterceptorState, Track
 
 Vec3 = tuple[float, float, float]
-DropFn = Callable[[str, object, str], bool]
-_NO_LOSS: DropFn = lambda kind, msg, dst: False  # noqa: E731
+DropFn = Callable[[InterceptorState, str], bool]
+_NO_LOSS: DropFn = lambda msg, dst: False  # noqa: E731
+
+PROTECTED = (200.0, 0.0, 0.0)
 
 
 def _track(tid: str, pos: Vec3, *, alive: bool = True) -> Track:
@@ -39,49 +39,33 @@ def _track(tid: str, pos: Vec3, *, alive: bool = True) -> Track:
 
 
 class _Mesh:
-    """Deferred, optionally-lossy peer fabric for a set of agents."""
+    """Deferred, optionally-lossy state fabric for a set of agents."""
 
     def __init__(self, *, drop: DropFn = _NO_LOSS) -> None:
         self.agents: dict[str, _Agent] = {}
         self._drop = drop
-        self._inflight: list[Claim | Commit] = []  # emitted, not yet delivered
-        self.claims: list[Claim] = []  # every emission, for assertions
-        self.commits: list[Commit] = []
+        self._inflight: list[InterceptorState] = []  # emitted, not yet delivered
+        self.states: list[InterceptorState] = []  # every emission, for assertions
+        self.muted: set[str] = set()  # ids whose broadcasts are dropped entirely
 
     def register(self, agent: _Agent) -> None:
         self.agents[agent.id] = agent
 
-    # emit callbacks handed to each RetaskingProtocol -------------------
-    def send_claim(self, claim: Claim) -> None:
-        self.claims.append(claim)
-        self._inflight.append(claim)
+    # emit callback handed to each RetaskingProtocol ----------------------
+    def send_state(self, st: InterceptorState) -> None:
+        self.states.append(st)
+        if st.interceptor_id not in self.muted:
+            self._inflight.append(st)
 
-    def send_commit(self, commit: Commit) -> None:
-        self.commits.append(commit)
-        self._inflight.append(commit)
-
-    # driven by the step loop ------------------------------------------
-    def deliver_events(self) -> None:
-        """Flush last step's claims/commits to every other agent (lossy)."""
+    # driven by the step loop --------------------------------------------
+    def deliver(self) -> None:
+        """Flush last step's broadcasts to every other agent (lossy)."""
         batch, self._inflight = self._inflight, []
         for msg in batch:
-            kind = "claim" if isinstance(msg, Claim) else "commit"
             for dst, ag in self.agents.items():
-                if dst == msg.interceptor_id or self._drop(kind, msg, dst):
+                if dst == msg.interceptor_id or self._drop(msg, dst):
                     continue
-                if isinstance(msg, Claim):
-                    ag.proto.on_peer_claim(msg)
-                else:
-                    ag.proto.on_peer_commit(msg)
-
-    def broadcast_state(self, now: float) -> None:
-        """Level-triggered peer state, re-sent every step (lossy)."""
-        for src, ag in self.agents.items():
-            msg = ag.state.to_state_msg(now)
-            for dst, peer in self.agents.items():
-                if dst == src or self._drop("state", msg, dst):
-                    continue
-                peer.picture.on_peer_state(msg)
+                ag.picture.on_peer_state(msg)
 
     def coverage(self) -> dict[str, str]:
         """Ground-truth {track -> the single interceptor on it}; raises on double."""
@@ -102,19 +86,31 @@ class _Agent:
         position: Vec3,
         mesh: _Mesh,
         *,
-        window: float = 0.4,
-        rounds: int = 2,
+        lock_threshold_s: float = 0.0,  # 0 => locking disabled (t_icpt < 0 never)
+        silence_timeout_s: float = 1e9,  # off unless a test exercises liveness
+        range_m: float = 1000.0,
+        speed_mps: float = 13.0,
+        protected_point: Vec3 = PROTECTED,
     ) -> None:
         self.id = iid
         self.state = InterceptorLocalState(iid, position)
-        self.picture = AwarenessPicture(iid, staleness_timeout_s=1e9)
+        self.picture = AwarenessPicture(
+            iid, staleness_timeout_s=1e9, protected_point=protected_point
+        )
         self.proto = RetaskingProtocol(
             self.state,
             self.picture,
-            consensus_window_s=window,
-            max_claim_rounds=rounds,
-            emit_claim=mesh.send_claim,
-            emit_commit=mesh.send_commit,
+            emit_state=mesh.send_state,
+            range_m=range_m,
+            speed_mps=speed_mps,
+            protected_point=protected_point,
+            lock_threshold_s=lock_threshold_s,
+            bucket_size_s=2.0,
+            bucket_hysteresis_s=0.2,
+            incumbency_margin=1e-3,
+            change_repeat=3,
+            heartbeat_period_s=0.2,
+            silence_timeout_s=silence_timeout_s,
         )
         mesh.register(self)
 
@@ -123,188 +119,166 @@ class _Agent:
         self.picture.update_self(track_id, self.state.alive, 0.0)
 
     def see(self, tracks: list[Track]) -> None:
-        self.state.latest_tracks = {t.track_id: t for t in tracks}
         self.picture.on_tracks(tracks)
 
 
-def _run(mesh: _Mesh, *, steps: int, dt: float = 0.1, start: float = 0.0) -> None:
+def _run(mesh: _Mesh, *, steps: int, dt: float = 0.2, start: float = 0.0) -> None:
     now = start
     agents = list(mesh.agents.values())
     for _ in range(steps):
-        mesh.deliver_events()  # flush previous step's claims/commits (1-tick latency)
-        mesh.broadcast_state(now)  # periodic level-triggered state
+        mesh.deliver()  # flush previous step's broadcasts (1-tick latency)
         for ag in agents:
             ag.proto.tick(now)
         now += dt
-    mesh.deliver_events()  # let the last round's commits land
+    mesh.deliver()  # let the last round land
 
 
 # --------------------------------------------------------------------------
-# 1. Simultaneous claims on the same target resolve to exactly one commit.
+# 1. Double cover + a gap -> the lower-priority co-owner yields and fills it.
 # --------------------------------------------------------------------------
-def test_simultaneous_claims_yield_single_commit() -> None:
-    mesh = _Mesh()
-    tracks = [_track("t1", (0, 0, 0)), _track("t3", (10, 0, 0))]
-    # i2 and i3 both park on t1 (double cover) -> both spare; t3 is the only gap.
-    i2 = _Agent("i2", (0, 0, 0), mesh)
-    i3 = _Agent("i3", (0, 0, 0), mesh)
-    for ag in (i2, i3):
-        ag.see(tracks)
-        ag.assign("t1")
-
-    _run(mesh, steps=8)
-
-    t3_commits = [c for c in mesh.commits if c.target_track_id == "t3"]
-    assert len(t3_commits) == 1, mesh.commits
-    assert t3_commits[0].interceptor_id == "i3"  # higher id wins (arbitration by id)
-    assert mesh.coverage()["t3"] == "i3"
-
-
-# --------------------------------------------------------------------------
-# 2. Scripted 3-agent scenario -> bijective coverage of the discovered tracks.
-# --------------------------------------------------------------------------
-def test_three_agents_converge_to_bijective_coverage() -> None:
+def test_double_cover_resolves_to_bijection() -> None:
     mesh = _Mesh()
     tracks = [_track("t1", (0, 0, 0)), _track("t2", (50, 0, 0)), _track("t3", (100, 0, 0))]
-    i1 = _Agent("i1", (0, 0, 0), mesh)  # alone on a live track -> must abstain
+    i1 = _Agent("i1", (0, 0, 0), mesh)  # alone on t1
     i2 = _Agent("i2", (60, 0, 0), mesh)
     i3 = _Agent("i3", (60, 0, 0), mesh)
     for ag in (i1, i2, i3):
         ag.see(tracks)
     i1.assign("t1")
     i2.assign("t2")
-    i3.assign("t2")  # i2,i3 double-cover t2; t3 is uncovered
+    i3.assign("t2")  # i2,i3 double-cover t2; t3 uncovered
+
+    _run(mesh, steps=20)
+
+    # Every track ends singly covered (coverage() raises on any double).
+    assert set(mesh.coverage()) == {"t1", "t2", "t3"}
+    assert mesh.coverage()["t1"] == "i1"  # unique live coverer never moved
+
+
+# --------------------------------------------------------------------------
+# 2. Tie on a track -> higher id_rank wins, the loser takes the open track.
+# --------------------------------------------------------------------------
+def test_tie_broken_by_id_then_fills_gap() -> None:
+    mesh = _Mesh()
+    tracks = [_track("t1", (0, 0, 0)), _track("t3", (10, 0, 0))]
+    i2 = _Agent("i2", (0, 0, 0), mesh)
+    i3 = _Agent("i3", (0, 0, 0), mesh)  # identical position to i2
+    for ag in (i2, i3):
+        ag.see(tracks)
+        ag.assign("t1")  # both park on t1; t3 is the only gap
 
     _run(mesh, steps=12)
 
-    assert mesh.coverage() == {"t1": "i1", "t2": "i2", "t3": "i3"}
-    # i1 was never a spare, so it never competed for the gap.
-    assert all(c.interceptor_id != "i1" for c in mesh.claims)
+    cov = mesh.coverage()
+    assert cov == {"t1": "i3", "t3": "i2"}  # i3 (higher rank) keeps t1; i2 yields
 
 
 # --------------------------------------------------------------------------
-# 3. A dropped Commit still reconverges (peers re-detect via state + conflict).
+# 3. A uniquely-covered live track is never abandoned (re-tasking fills, not shifts).
 # --------------------------------------------------------------------------
-def test_reconverges_when_commits_are_lost() -> None:
-    drop_all_commits: DropFn = lambda kind, msg, dst: kind == "commit"  # noqa: E731
-    mesh = _Mesh(drop=drop_all_commits)
-    tracks = [_track("t1", (0, 0, 0)), _track("t2", (50, 0, 0)), _track("t3", (100, 0, 0))]
-    i1 = _Agent("i1", (0, 0, 0), mesh)
-    i2 = _Agent("i2", (60, 0, 0), mesh)
-    i3 = _Agent("i3", (60, 0, 0), mesh)
-    for ag in (i1, i2, i3):
+def test_unique_live_coverer_does_not_retask() -> None:
+    mesh = _Mesh()
+    tracks = [_track("t1", (0, 0, 0)), _track("t2", (50, 0, 0)), _track("t3", (300, 0, 0))]
+    i1 = _Agent("i1", (0, 0, 0), mesh)  # alone on live t1
+    i2 = _Agent("i2", (50, 0, 0), mesh)  # alone on live t2
+    for ag in (i1, i2):
         ag.see(tracks)
     i1.assign("t1")
     i2.assign("t2")
-    i3.assign("t2")
 
-    _run(mesh, steps=40)  # commits never arrive; convergence rides on state re-broadcast
+    _run(mesh, steps=12)
 
-    assert mesh.coverage() == {"t1": "i1", "t2": "i2", "t3": "i3"}
-
-
-# --------------------------------------------------------------------------
-# 4. Target dying inside the claim window -> clean abandon, no commit on a corpse.
-# --------------------------------------------------------------------------
-def test_target_dies_during_window_no_commit() -> None:
-    mesh = _Mesh()
-    # i2 sits on a dead track (-> spare, conflict armed); t3 is the live gap.
-    live = [_track("t0", (0, 0, 0), alive=False), _track("t3", (10, 0, 0))]
-    i2 = _Agent("i2", (0, 0, 0), mesh)
-    i2.see(live)
-    i2.assign("t0")
-
-    i2.proto.tick(0.0)  # IDLE -> claims t3, WAITING (deadline 0.4)
-    assert any(c.target_track_id == "t3" for c in mesh.claims)
-
-    # t3 is engaged mid-window: it goes dead in both the picture and the tracks.
-    dead = [_track("t0", (0, 0, 0), alive=False), _track("t3", (10, 0, 0), alive=False)]
-    i2.see(dead)
-    i2.proto.tick(0.5)  # past the deadline -> must abandon, not commit
-
-    assert mesh.commits == []
-    assert i2.state.assigned_track_id == "t0"  # untouched; no commit on a corpse
+    # No spare to send, so t3 stays uncovered; neither abandons its live track.
+    assert mesh.coverage() == {"t1": "i1", "t2": "i2"}
 
 
 # --------------------------------------------------------------------------
-# 5. An interceptor expended mid-claim emits no phantom commit.
+# 4. Target dies -> the owner releases the corpse and re-tasks to a live gap.
 # --------------------------------------------------------------------------
-def test_expended_during_claim_no_phantom_commit() -> None:
+def test_dead_target_releases_and_retasks() -> None:
     mesh = _Mesh()
     tracks = [_track("t0", (0, 0, 0), alive=False), _track("t3", (10, 0, 0))]
     i2 = _Agent("i2", (0, 0, 0), mesh)
     i2.see(tracks)
-    i2.assign("t0")  # spare via dead assignment
+    i2.assign("t0")  # owns a corpse
 
-    i2.proto.tick(0.0)  # claims t3
-    assert any(c.target_track_id == "t3" for c in mesh.claims)
+    _run(mesh, steps=6)
 
-    i2.state.alive = False  # shot down before the window closes
-    i2.proto.tick(0.5)
-
-    assert mesh.commits == []
+    assert i2.state.assigned_track_id == "t3"  # dropped t0, took the live gap
 
 
 # --------------------------------------------------------------------------
-# 6. Greedy fallback after max rounds of being outranked (FR-8.6).
+# 5. An expended interceptor releases and advertises alive=False (frees its track).
 # --------------------------------------------------------------------------
-def test_greedy_fallback_after_max_rounds() -> None:
-    mesh = _Mesh()
-    # i1 sits on a dead track -> it's a spare and there's a conflict to resolve.
-    tracks = [
-        _track("t0", (0, 0, 0), alive=False),
-        _track("t2", (1, 0, 0)),
-        _track("t3", (2, 0, 0)),
-        _track("t4", (3, 0, 0)),
-    ]
-    i1 = _Agent("i1", (0, 0, 0), mesh, window=0.4, rounds=2)
-    i1.see(tracks)
-    i1.assign("t0")  # assigned to a corpse -> wasted -> spare, conflict present
-
-    now = 0.0
-    i1.proto.tick(now)  # claims closest uncovered: t2
-    assert mesh.claims[-1].target_track_id == "t2"
-
-    # Round 1: a higher-id peer outranks us on t2 -> we yield and pick t3.
-    # (score is ignored by id-based arbitration; i9 outranks i1 regardless.)
-    i1.proto.on_peer_claim(Claim("i9", "t2", 0.0, now))
-    i1.proto.tick(now + 0.4)
-    assert mesh.claims[-1].target_track_id == "t3"
-
-    # Round 2: outranked again -> max rounds hit -> greedy commit, no further wait.
-    i1.proto.on_peer_claim(Claim("i9", "t3", 0.0, now + 0.4))
-    i1.proto.tick(now + 0.8)
-
-    assert len(mesh.commits) == 1
-    committed = mesh.commits[0].target_track_id
-    assert committed == "t2"  # greedy = closest uncovered, contention ignored
-    assert i1.state.assigned_track_id == committed
-    # Whole episode fit in 2 windows -> well under the 2 s budget (NFR-1/FR-8.7).
-    assert (now + 0.8) - now < 2.0
-
-
-# --------------------------------------------------------------------------
-# 7. We never abandon a target we uniquely cover (re-tasking fills, not shifts).
-# --------------------------------------------------------------------------
-def test_unique_live_coverer_does_not_retask() -> None:
+def test_expended_releases_and_broadcasts_death() -> None:
     mesh = _Mesh()
     tracks = [_track("t1", (0, 0, 0)), _track("t2", (50, 0, 0))]
-    i1 = _Agent("i1", (0, 0, 0), mesh)  # alone on live t1
-    i2 = _Agent("i2", (50, 0, 0), mesh)  # alone on live t2
-    i1.see(tracks)
-    i2.see(tracks)
+    i1 = _Agent("i1", (0, 0, 0), mesh)
+    i2 = _Agent("i2", (50, 0, 0), mesh)
+    for ag in (i1, i2):
+        ag.see(tracks)
     i1.assign("t1")
     i2.assign("t2")
-    # A third track appears that nobody can reach without stranding a live one.
-    extra = [*tracks, _track("t3", (200, 0, 0))]
-    i1.see(extra)
-    i2.see(extra)
 
-    _run(mesh, steps=10)
+    i2.state.alive = False  # shot down
+    _run(mesh, steps=4)
 
-    # Each keeps its unique live track; t3 stays uncovered (no spare to send).
-    assert mesh.coverage() == {"t1": "i1", "t2": "i2"}
-    assert mesh.commits == []
+    assert i2.state.assigned_track_id is None
+    # Its last broadcast carried the death so peers can free t2.
+    last_i2 = [s for s in mesh.states if s.interceptor_id == "i2"][-1]
+    assert last_i2.alive is False and last_i2.assigned_track_id is None
+    assert i1.picture.coverage().get("t2") is None
+
+
+# --------------------------------------------------------------------------
+# 6. Monotone lock: once locked we never yield, even to a higher-priority peer.
+# --------------------------------------------------------------------------
+def test_locked_owner_never_yields() -> None:
+    mesh = _Mesh()
+    t1 = _track("t1", (0, 0, 0))
+    i2 = _Agent("i2", (0, 0, 0), mesh, lock_threshold_s=5.0)
+    i2.see([t1])
+    i2.assign("t1")
+
+    i2.proto.tick(0.0)  # intercept_time == 0 < 5 -> locks
+    assert i2.proto.locked is True
+
+    # A higher-priority peer appears claiming t1 (huge key). Locked -> ignore it.
+    poacher = InterceptorState(
+        "i9", (0, 0, 0), (0, 0, 0), "t1", True, 0.2, owns_priority=(1e9, 0.0, 9.0), seq=1
+    )
+    i2.picture.on_peer_state(poacher)
+    i2.proto.tick(0.2)
+
+    assert i2.proto.locked is True
+    assert i2.state.assigned_track_id == "t1"  # held through the challenge
+
+
+# --------------------------------------------------------------------------
+# 7. Stale-safe: a silent peer keeps covering until the timeout, then frees.
+# --------------------------------------------------------------------------
+def test_silent_peer_holds_then_frees() -> None:
+    mesh = _Mesh()
+    tracks = [_track("t1", (0, 0, 0)), _track("t2", (50, 0, 0))]
+    # i1 alone on t1; i2 alone on t2 then goes silent. silence_timeout 0.6 s.
+    i1 = _Agent("i1", (0, 0, 0), mesh, silence_timeout_s=0.6)
+    i2 = _Agent("i2", (50, 0, 0), mesh, silence_timeout_s=0.6)
+    for ag in (i1, i2):
+        ag.see(tracks)
+    i1.assign("t1")
+    i2.assign("t2")
+
+    _run(mesh, steps=3)  # let i1 hear i2 (t2 covered)
+    assert "t2" in i1.picture.coverage()
+
+    mesh.muted.add("i2")  # i2 falls silent
+    # Within the timeout i1 still treats t2 as covered (no false retask).
+    _run(mesh, steps=2, start=0.6)
+    assert i1.state.assigned_track_id == "t1"
+
+    # Past the timeout i1 frees t2 in its picture (would re-task if it had a spare).
+    _run(mesh, steps=4, start=2.0)
+    assert i1.picture.coverage().get("t2") is None
 
 
 # --------------------------------------------------------------------------
@@ -312,7 +286,7 @@ def test_unique_live_coverer_does_not_retask() -> None:
 # --------------------------------------------------------------------------
 def _lossy(prob: float, seed: int) -> DropFn:
     rng = random.Random(seed)
-    return lambda kind, msg, dst: rng.random() < prob
+    return lambda msg, dst: rng.random() < prob
 
 
 def test_packet_loss_sweep_still_converges() -> None:
@@ -333,12 +307,11 @@ def test_packet_loss_sweep_still_converges() -> None:
             i2.assign("t2")
             i3.assign("t2")
 
-            # Generous horizon: heavy loss just means more conflict cycles.
-            _run(mesh, steps=120)
+            _run(mesh, steps=160)  # heavy loss just means more reconvergence cycles
 
             # Bijection is the contract, not a specific id->track mapping: under
             # loss *who* lands where can differ, but every track stays singly
-            # covered (coverage() raises on any double) and none is left behind.
+            # covered (coverage() raises on a double) and none is left behind.
             assert set(mesh.coverage()) == {"t1", "t2", "t3"}, (
                 f"prob={prob} seed={seed} -> {mesh.coverage()}"
             )

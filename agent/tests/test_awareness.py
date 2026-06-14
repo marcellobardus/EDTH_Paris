@@ -1,7 +1,7 @@
 """A4 tests (FR-7.3 / FR-8.1): local picture + architecture §4 conflict predicate."""
 
 from agent.awareness import AwarenessPicture
-from contracts.messages import Commit, EngagementEvent, InterceptorState, Track
+from contracts.messages import EngagementEvent, InterceptorState, Track
 
 
 def _state(iid: str, track: str | None, *, alive: bool = True, t: float = 0.0) -> InterceptorState:
@@ -93,14 +93,28 @@ def test_stale_peer_still_covers_its_track() -> None:
     assert p.has_coverage_conflict() is False
 
 
-def test_peer_commit_updates_picture_immediately() -> None:
-    # FR-8.5: act on a Commit before the peer's next state arrives.
+def test_anti_replay_drops_older_seq() -> None:
+    # A late (lower-seq) packet must not undo newer ownership.
     p = _picture()
-    p.on_tracks([_track("t1"), _track("t2"), _track("t3")])
-    p.update_self("t1", True, 0.0)
-    p.on_peer_state(_state("i2", "t2"))
-    p.on_peer_state(_state("i3", "t2"))  # i2,i3 both on t2; t3 uncovered
-    assert p.has_coverage_conflict() is True
-    p.on_commit(Commit("i3", "t3", 0.5))  # i3 moves to t3
-    assert p.coverage()["t3"] == ["i3"]
-    assert p.has_coverage_conflict() is False
+    p.on_tracks([_track("t1"), _track("t2")])
+    p.on_peer_state(_state("i2", "t2"))  # seq defaults to 0
+    fresh = _state("i2", "t1", t=1.0)
+    fresh.seq = 5
+    p.on_peer_state(fresh)
+    stale = _state("i2", "t2", t=0.5)
+    stale.seq = 2  # arrives late, lower seq -> ignored
+    p.on_peer_state(stale)
+    assert p.coverage().get("t1") == ["i2"]
+    assert "t2" not in p.coverage()
+
+
+def test_expire_silent_frees_coverage() -> None:
+    # Liveness cause 1: a peer silent past the timeout stops covering its track.
+    p = _picture()
+    p.on_tracks([_track("t1"), _track("t2")])
+    p.update_self("t1", True, 10.0)
+    p.on_peer_state(_state("i2", "t2", t=0.0))
+    assert "t2" in p.coverage()
+    p.expire_silent(now=5.0, silence_timeout=0.6)  # 5s silence > 0.6s
+    assert "t2" not in p.coverage()
+    assert p.uncovered_active_tracks() == {"t2"}

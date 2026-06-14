@@ -1,228 +1,332 @@
 """
-Decentralised re-tasking — claim-and-confirm protocol (A5, FR-8).
+Decentralised re-tasking — CBAA variant, stale-safe (A5, FR-8).
 
 Pure and ROS-free, exactly like awareness/guidance/local_state: the node
-(interceptor_agent.py) owns the Comms seam and feeds this FSM peer claims/commits
-plus a periodic `tick(now)`. Every side effect leaves through two injected
-callbacks (`emit_claim`, `emit_commit`) and through mutating the shared
-`InterceptorLocalState` / `AwarenessPicture` — so the whole protocol is unit-
-testable headless, with a hand-wired in-memory mesh standing in for DDS.
+(interceptor_agent.py) owns the Comms seam and feeds this engine peer state
+(via the shared AwarenessPicture) plus a periodic `tick(now)`. The ONE side
+effect leaves through a single injected callback `emit_state` — the protocol's
+only message is the InterceptorState broadcast (the old Claim/Commit pair is
+gone). So the whole protocol is unit-testable headless, with a hand-wired
+in-memory mesh standing in for DDS.
 
-PROTOCOL (architecture §4 flowchart, FR-8.3-8.6)
-------------------------------------------------
-    IDLE --conflict & I'm a spare--> CLAIM(best uncovered T) --> WAIT(~400 ms)
-      - a peer with HIGHER interceptor_id claims the same T  -> yield:
-          round+1; pick next-best uncovered & re-CLAIM, or after max rounds
-          fall back to greedy (closest uncovered) and COMMIT directly.
-      - otherwise -> COMMIT(T): take the assignment, update the picture, and
-          return to IDLE (guidance re-points itself off the new target()).
+WHY CBAA INSTEAD OF CLAIM-AND-CONFIRM
+-------------------------------------
+Claim-and-confirm needed a synchronous ~400 ms window and three message types;
+under loss the window logic got fragile. CBAA collapses everything into one
+idempotent, level-triggered broadcast: each interceptor advertises which track
+it `owns`, the self-computed `owns_priority` that justifies it, and a monotone
+`locked` flag. Ownership is resolved by a *total order on a priority key* — no
+rounds, no deadline, no commit. Convergence rides on the periodic re-broadcast,
+so a dropped packet just delays a decision by a cycle instead of breaking it.
 
-ARBITRATION IS BY interceptor_id, HIGHEST WINS (FR-8.4 / architecture §4
-"Higher-ID claim received for T?"). Claim carries a `score` (engagement value)
-that we populate for peers/loggers, but our tie-break ignores it and compares
-ids: the i1..iN convention lets us order on the trailing integer (i10 > i2, not
-the lexical "i10" < "i2"); ids without a numeric suffix fall back to a lexical
-tie-break.
+THE PRIORITY KEY (total order, time-invariant by construction)
+--------------------------------------------------------------
+    Key = (affinity_bucket, danger, id_rank)        # lexicographic, LARGER wins
+      affinity_bucket = frozen_threat / (intercept_bucket + 1)
+      danger          = -distance(track, protected_point)   # tie-break 1
+      id_rank         = numeric suffix of the id            # tie-break 2 (final)
+The intercept time is *bucketed* (with hysteresis at the boundaries) so small
+estimate jitter never reorders the key — that, plus an incumbency margin and a
+monotone lock, is what keeps assignments from oscillating.
 
 KEY INVARIANTS (the traps the demo dies on)
 -------------------------------------------
-* Non-blocking: the 400 ms window is a deadline re-read at each tick, never a
-  sleep — the ROS executor is single-threaded.
-* Only a *spare* interceptor re-tasks (free / redundant on a double-covered
-  track / sitting on a dead one). One uniquely covering a live track keeps it,
-  so re-tasking fills the gap instead of merely shifting it.
-* Same selection metric everywhere (closest uncovered, track_id tie-break) so an
-  agent's claim target matches what its peers expect it to pick — deterministic
-  per local picture.
-* Idempotent under loss: a dropped COMMIT just means peers re-detect the
-  conflict next cycle and re-resolve; committing is safe to repeat.
-* No phantom commits: an expended interceptor (alive=False) or a target that
-  dies mid-window abandons cleanly without committing.
+* No recompute of a peer's key: peers compare the transmitted `owns_priority`.
+* Monotone lock: once intercept_time < lock_threshold we lock and never yield —
+  terminal guidance is not interruptible.
+* Stale-safe: a silent peer keeps covering its last track until SILENCE_TIMEOUT
+  (then awareness frees it); an old (lower-seq) packet is ignored.
+* Idempotent under loss: a changed state is re-emitted CHANGE_REPEAT times and a
+  heartbeat goes out every cycle, so peers reconverge after dropped packets.
+* No phantom ownership on a corpse: a dead target or an expended self releases
+  cleanly and broadcasts the release.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from enum import Enum, auto
 
-from contracts.messages import Claim, Commit
+from contracts.messages import InterceptorState
 
 from agent.awareness import AwarenessPicture
+from agent.guidance import intercept_time
 from agent.local_state import InterceptorLocalState
 
 Vec3 = tuple[float, float, float]
+Key = tuple[float, float, float]
+
+_NEG_INF = float("-inf")
 
 
-def _id_priority(interceptor_id: str) -> tuple[int, str]:
-    """Total order for arbitration; higher tuple wins. Numeric suffix first
-    (so i10 > i2), then the raw id as a lexical tie-break."""
+def _id_rank(interceptor_id: str) -> float:
+    """Numeric suffix as a rank (higher wins); -1 if the id has no digits.
+    The i1..iN convention orders on the trailing integer (i10 > i2)."""
     digits = ""
     for ch in reversed(interceptor_id):
         if ch.isdigit():
             digits = ch + digits
         else:
             break
-    return (int(digits) if digits else -1, interceptor_id)
+    return float(int(digits)) if digits else -1.0
 
 
 def _distance(a: Vec3, b: Vec3) -> float:
     return math.dist(a, b)
 
 
-class _Phase(Enum):
-    IDLE = auto()
-    WAITING = auto()
-
-
 class RetaskingProtocol:
-    """Claim-and-confirm state machine for one interceptor."""
+    """CBAA re-tasking engine for one interceptor."""
 
     def __init__(
         self,
         state: InterceptorLocalState,
         picture: AwarenessPicture,
         *,
-        consensus_window_s: float,
-        max_claim_rounds: int,
-        emit_claim: Callable[[Claim], None],
-        emit_commit: Callable[[Commit], None],
+        emit_state: Callable[[InterceptorState], None],
+        range_m: float,
+        speed_mps: float,
+        protected_point: Vec3,
+        lock_threshold_s: float,
+        bucket_size_s: float,
+        bucket_hysteresis_s: float,
+        incumbency_margin: float,
+        change_repeat: int,
+        heartbeat_period_s: float,
+        silence_timeout_s: float,
     ) -> None:
         self.state = state
         self.picture = picture
-        self.window = consensus_window_s
-        self.max_rounds = max_claim_rounds
-        self._emit_claim = emit_claim
-        self._emit_commit = emit_commit
+        self._emit_state = emit_state
+        self.range = range_m
+        self.speed = speed_mps
+        self.protected_point = protected_point
+        self.lock_threshold = lock_threshold_s
+        self.bucket_size = bucket_size_s
+        self.bucket_hysteresis = bucket_hysteresis_s
+        self.incumbency_margin = incumbency_margin
+        self.change_repeat = change_repeat
+        self.heartbeat_period = heartbeat_period_s
+        self.silence_timeout = silence_timeout_s
 
-        self._phase = _Phase.IDLE
-        self._target: str | None = None       # track currently being claimed
-        self._deadline = 0.0                   # wall-free time the window expires
-        self._round = 0
-        self._yielded: set[str] = set()        # targets ceded this episode
-        self._lost_target = False              # a higher-id peer claimed _target
+        self._id_rank = _id_rank(state.id)
+        # `owns` is mirrored on state.assigned_track_id so guidance re-points off
+        # it; the key/bucket/lock that justify it live here.
+        self.owns_priority: Key | None = None
+        self.owns_bucket: int | None = None
+        self.locked = False
 
-    # -- peer events (wired to lossy claim/commit subscriptions) -----------
-    def on_peer_claim(self, claim: Claim) -> None:
-        if claim.interceptor_id == self.state.id:
-            return  # ignore our own echo
-        if (
-            self._phase is _Phase.WAITING
-            and claim.target_track_id == self._target
-            and _id_priority(claim.interceptor_id) > _id_priority(self.state.id)
-        ):
-            self._lost_target = True  # a higher-id peer outranks us on this target
+        self._seq = 0
+        self._repeats_left = 0
+        # last broadcast snapshot, for change detection / heartbeat scheduling.
+        self._last_owns: str | None = None
+        self._last_locked = False
+        self._last_alive = True
+        self._last_time = _NEG_INF
 
-    def on_peer_commit(self, commit: Commit) -> None:
-        # FR-8.5: a peer Commit updates the local picture immediately.
-        self.picture.on_commit(commit)
-        if commit.interceptor_id == self.state.id:
-            return
-        # A peer locked the target we were chasing -> drop it and re-evaluate.
-        if self._phase is _Phase.WAITING and commit.target_track_id == self._target:
-            self._reset()
+    # -- properties --------------------------------------------------------
+    @property
+    def owns(self) -> str | None:
+        return self.state.assigned_track_id
 
-    # -- periodic driver ---------------------------------------------------
+    # -- periodic driver (DECISION_PERIOD, 5 Hz) ---------------------------
     def tick(self, now: float) -> None:
+        self.picture.expire_silent(now, self.silence_timeout)  # liveness cause 1
+
         if not self.state.alive:
-            self._reset()  # expended: never claim or commit (no phantoms)
+            # Cause 2: expended -> drop ownership and tell peers (alive=False).
+            if self.owns is not None:
+                self.release()
+            self.force_emit(now)
             return
 
-        if self._phase is _Phase.WAITING:
-            if now >= self._deadline:
-                self._resolve(now)
+        if self.locked:
+            self.maybe_emit(now)  # monotone: hold, just keep broadcasting
             return
 
-        # IDLE: start a new episode only if there is a real gap AND I'm the
-        # spare expected to fill it (architecture §4 conjunctive predicate).
-        if not self.picture.has_coverage_conflict() or not self._am_i_spare():
-            return
-        target = self._select_target()
-        if target is None:
-            return
-        self._round = 0
-        self._yielded = set()
-        self._begin_claim(target, now)
-
-    # -- internals ---------------------------------------------------------
-    def _am_i_spare(self) -> bool:
-        """True if re-tasking me does not strand a uniquely-covered live track:
-        I'm free, redundant on a double-covered track, or sitting on a dead one."""
-        tid = self.state.assigned_track_id
-        if tid is None or self.picture.is_dead(tid):
-            return True
-        others = [c for c in self.picture.coverage().get(tid, []) if c != self.state.id]
-        return len(others) >= 1
-
-    def _select_target(self) -> str | None:
-        """Best uncovered active track: closest to us, track_id as tie-break.
-        Same metric peers assume of us, so claims line up deterministically."""
-        candidates = self.picture.uncovered_active_tracks() - self._yielded
-        if not candidates:
-            return None
-        return min(candidates, key=self._rank_key)
-
-    def _rank_key(self, track_id: str) -> tuple[float, str]:
-        track = self.state.latest_tracks.get(track_id)
-        if track is None:
-            return (math.inf, track_id)
-        return (_distance(self.state.position, track.position), track_id)
-
-    def _begin_claim(self, target: str, now: float) -> None:
-        self._phase = _Phase.WAITING
-        self._target = target
-        self._deadline = now + self.window
-        self._lost_target = False
-        # Engagement value for the Claim contract (closer target = higher). Our
-        # arbitration is by id (see module docstring), so this is informational —
-        # but populated honestly rather than left at a placeholder.
-        score = 1.0 / (1.0 + self._rank_key(target)[0])
-        self._emit_claim(Claim(self.state.id, target, score, now))
-
-    def _resolve(self, now: float) -> None:
-        target = self._target
-        assert target is not None  # WAITING always has a target
-
-        # Target died inside the window -> abandon cleanly, no commit on a corpse.
-        if self.picture.is_dead(target) or target not in self.picture.active_tracks():
-            self._reset()
+        self.update_lock()
+        if self.locked:
+            self.force_emit(now)  # announce the lock immediately
             return
 
-        if not self._lost_target:
-            self._commit(target, now)
-            return
+        self.resolve_assignment()
+        self.maybe_emit(now)
 
-        # We were outranked: cede this target and try the next-best one.
-        self._yielded.add(target)
-        self._round += 1
-        if self._round >= self.max_rounds:
-            self._greedy_commit(now)  # FR-8.6 fallback under sustained contention/loss
-            return
-        nxt = self._select_target()
-        if nxt is None:
-            self._reset()  # nothing left to take; stand down
-            return
-        self._begin_claim(nxt, now)
+    # -- core: validate / yield / acquire ----------------------------------
+    def resolve_assignment(self) -> None:
+        # (A) Cause 2: is the owned target dead?
+        if self.owns is not None:
+            t = self.picture.track(self.owns)
+            if t is None or not t.alive or self.picture.is_dead(self.owns):
+                self.release()
 
-    def _greedy_commit(self, now: float) -> None:
-        # Closest uncovered active track, committed without another wait round.
-        candidates = self.picture.uncovered_active_tracks()
-        if not candidates:
-            self._reset()
+        # (B) Cause 3: a converging conflict we should cede?
+        if self.owns is not None:
+            self.refresh_owns_priority()  # compare on a current key
+            if self.should_yield():
+                self.release()
+
+        # (C) Free -> acquire the best available target.
+        if self.owns is None:
+            target = self.best_available_target()
+            if target is not None:
+                self.acquire(target)
+
+    def should_yield(self) -> bool:
+        mine = self.owns_priority
+        if mine is None:
+            return False
+        rivals = [
+            p.owns_priority
+            for p in self.picture.peers()
+            if p.alive
+            and not p.locked
+            and p.assigned_track_id == self.owns
+            and p.owns_priority is not None
+        ]
+        if not rivals:
+            return False
+        return max(rivals) > mine  # strict; id_rank rules out exact ties
+
+    def best_available_target(self) -> str | None:
+        best_track: str | None = None
+        best_key: Key | None = None
+        for tid, t in self.picture.tracks().items():
+            if not t.alive or self.picture.is_dead(tid) or not self.can_take(t):
+                continue
+            k = self.priority_key(t, None)
+            if best_key is None or k > best_key:
+                best_key, best_track = k, tid
+        return best_track
+
+    def can_take(self, track: object) -> bool:
+        tid = track.track_id  # type: ignore[attr-defined]
+        k = self.priority_key(track, None)
+        if k[0] == _NEG_INF:  # out of range / uncatchable
+            return False
+        peers = self.picture.peers()
+        if any(p.locked and p.assigned_track_id == tid for p in peers):
+            return False  # someone has terminal lock on it
+        incumbent_keys = [
+            p.owns_priority
+            for p in peers
+            if p.alive
+            and not p.locked
+            and p.assigned_track_id == tid
+            and p.owns_priority is not None
+        ]
+        if not incumbent_keys:
+            return True  # uncovered -> free to take
+        return self._beats_clearly(k, max(incumbent_keys))  # must beat the holder by margin
+
+    def _beats_clearly(self, challenger: Key, incumbent: Key) -> bool:
+        """A challenger displaces an incumbent only by beating its PRIMARY
+        component by `incumbency_margin` (ties on a near-equal bucket stay with
+        the holder — stickiness)."""
+        return challenger > (incumbent[0] + self.incumbency_margin, incumbent[1], incumbent[2])
+
+    # -- priority key ------------------------------------------------------
+    def priority_key(self, track: object, prev_bucket: int | None) -> Key:
+        pos = track.position  # type: ignore[attr-defined]
+        if _distance(self.state.position, pos) > self.range:
+            return (_NEG_INF, 0.0, self._id_rank)  # out of range -> excluded
+        t_icpt = intercept_time(self.state.position, self.speed, pos, track.velocity)  # type: ignore[attr-defined]
+        if not math.isfinite(t_icpt):
+            return (_NEG_INF, 0.0, self._id_rank)  # uncatchable -> excluded
+        b = self._bucket(t_icpt, prev_bucket)
+        affinity = self.picture.threat_score(track.track_id) / (b + 1)  # type: ignore[attr-defined]
+        danger = -_distance(pos, self.protected_point)
+        return (affinity, danger, self._id_rank)
+
+    def _bucket(self, t: float, prev_bucket: int | None) -> int:
+        """intercept_time quantised, with hysteresis so jitter at a boundary
+        does not flip the bucket (and thus the key)."""
+        if not math.isfinite(t):  # uncatchable -> a very high (low-priority) bucket
+            return 10**9
+        raw = int(math.floor(t / self.bucket_size))
+        if prev_bucket is None:
+            return raw
+        lower = prev_bucket * self.bucket_size
+        upper = (prev_bucket + 1) * self.bucket_size
+        if t < lower - self.bucket_hysteresis:
+            return raw  # dropped clearly below
+        if t >= upper + self.bucket_hysteresis:
+            return raw  # rose clearly above
+        return prev_bucket  # inside the sticky band -> stay
+
+    # -- acquire / release / refresh ---------------------------------------
+    def acquire(self, track_id: str) -> None:
+        t = self.picture.track(track_id)
+        assert t is not None  # only called for a track we just selected
+        self.state.assigned_track_id = track_id
+        t_icpt = intercept_time(self.state.position, self.speed, t.position, t.velocity)
+        self.owns_bucket = self._bucket(t_icpt, None)
+        self.owns_priority = self.priority_key(t, self.owns_bucket)
+        self._repeats_left = self.change_repeat
+
+    def release(self) -> None:
+        self.state.assigned_track_id = None
+        self.owns_priority = None
+        self.owns_bucket = None
+        self._repeats_left = self.change_repeat
+
+    def refresh_owns_priority(self) -> None:
+        if self.owns is None:
             return
-        self._commit(min(candidates, key=self._rank_key), now)
+        t = self.picture.track(self.owns)
+        if t is None:
+            return
+        t_icpt = intercept_time(self.state.position, self.speed, t.position, t.velocity)
+        self.owns_bucket = self._bucket(t_icpt, self.owns_bucket)
+        self.owns_priority = self.priority_key(t, self.owns_bucket)
 
-    def _commit(self, target: str, now: float) -> None:
-        # Take the assignment, reflect it locally at once (FR-8.5), broadcast.
-        self.state.assigned_track_id = target
-        self.picture.update_self(target, self.state.alive, now)
-        self._emit_commit(Commit(self.state.id, target, now))
-        self._reset()
+    # -- lock (monotone, self-declared) ------------------------------------
+    def update_lock(self) -> None:
+        if self.locked or self.owns is None:
+            return
+        t = self.picture.track(self.owns)
+        if t is None or not t.alive or self.picture.is_dead(self.owns):
+            return
+        t_icpt = intercept_time(self.state.position, self.speed, t.position, t.velocity)
+        if t_icpt < self.lock_threshold:
+            self.locked = True
 
-    def _reset(self) -> None:
-        self._phase = _Phase.IDLE
-        self._target = None
-        self._deadline = 0.0
-        self._round = 0
-        self._yielded = set()
-        self._lost_target = False
+    # -- communication (event-driven + loss robustness) --------------------
+    def maybe_emit(self, now: float) -> None:
+        self.refresh_owns_priority()
+        changed = (
+            self.owns != self._last_owns
+            or self.locked != self._last_locked
+            or self.state.alive != self._last_alive
+        )
+        heartbeat_due = (now - self._last_time) >= self.heartbeat_period
+        if changed:
+            self._repeats_left = self.change_repeat  # re-emit x3 (0.1^3 = 0.1% miss)
+        if changed or heartbeat_due or self._repeats_left > 0:
+            self._broadcast(now)
+            self._repeats_left = max(0, self._repeats_left - 1)
+
+    def force_emit(self, now: float) -> None:
+        self._repeats_left = self.change_repeat
+        self._broadcast(now)
+
+    def _broadcast(self, now: float) -> None:
+        self._seq += 1
+        # Keep our own entry in the picture current (the awareness logger reads it).
+        self.picture.update_self(self.owns, self.state.alive, now)
+        msg = InterceptorState(
+            interceptor_id=self.state.id,
+            position=self.state.position,
+            velocity=self.state.velocity,
+            assigned_track_id=self.owns,
+            alive=self.state.alive,
+            timestamp=now,
+            owns_priority=self.owns_priority,
+            locked=self.locked,
+            seq=self._seq,
+        )
+        self._emit_state(msg)
+        self._last_owns = self.owns
+        self._last_locked = self.locked
+        self._last_alive = self.state.alive
+        self._last_time = now

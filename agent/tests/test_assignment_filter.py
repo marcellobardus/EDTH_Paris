@@ -4,7 +4,9 @@ from agent.local_state import InterceptorLocalState, select_assignment
 from contracts.messages import Assignment
 
 
-def _asg(iid: str, track: str, wp=(0.0, 0.0, 0.0), t=0.0) -> Assignment:
+def _asg(
+    iid: str, track: str, wp: tuple[float, float, float] = (0.0, 0.0, 0.0), t: float = 0.0
+) -> Assignment:
     return Assignment(interceptor_id=iid, track_id=track, initial_waypoint=wp, timestamp=t)
 
 
